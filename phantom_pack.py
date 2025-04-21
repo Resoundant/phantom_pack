@@ -7,8 +7,10 @@ import datetime
 import copy
 import json
 import matplotlib.pyplot as plt
+import time
 
 # Phantom pack and analysis parameters
+OUTPUT_DIR = "phantompack_results"
 VIAL_RADIUS_MM = 19/2      # radius of the phantom pack vials
 ROI_RADIUS_MM = 13/2       # radius of the phantom pack ROI
 RADIUS_TOLERANCE_MM = 4    # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
@@ -30,9 +32,80 @@ DICOM_TAG_LIST = [
     "PulseSequenceName",
     "0019109C",
     "InstitutionName",
-    "StationName"
+    "StationName",
+    "AcquisitionDate",
+    "AcquisitionTime",
 ]
 
+
+identifying_labels = [
+    {
+        "image_label": "pdff_fam_bh_offline",
+        "search_in": "SeriesDescription",
+        "search_for": "FatFrac: BH new FAM Offline",
+        "label_match": "water_fam_bh_offline"
+    },
+    {
+        "image_label": "water_fam_bh_offline",
+        "search_in": "SeriesDescription",
+        "search_for": "WATER: BH new FAM Offline",
+        "label_match": "pdff_fam_bh_offline"
+    },
+    {
+        "image_label": "pdff_fam_bh",
+        "search_in": "SeriesDescription",
+        "search_for": "FatFrac: BH new FAM",
+        "label_match": "water_fam_bh"
+    },
+    {
+        "image_label": "water_fam_bh",
+        "search_in": "SeriesDescription",
+        "search_for": "WATER: BH new FAM",
+        "label_match": "pdff_fam_bh"
+    },
+    {
+        "image_label": "pdff_fam_fb_offline",
+        "search_in": "SeriesDescription",
+        "search_for": "FatFrac: FB new FAM Offline",
+        "label_match": "water_fam_fb_offline"
+    },
+    {
+        "image_label": "water_fam_fb_offline",
+        "search_in": "SeriesDescription",
+        "search_for": "WATER: FB new FAM Offline",
+        "label_match": "pdff_fam_fb_offline"
+    },
+    {
+        "image_label": "pdff_fam_fb",
+        "search_in": "SeriesDescription",
+        "search_for": "FatFrac: FB new FAM",
+        "label_match": "water_fam_fb"
+    },
+    {
+        "image_label": "water_fam_fb",
+        "search_in": "SeriesDescription",
+        "search_for": "WATER: FB new FAM",
+        "label_match": "pdff_fam_fb"
+    },
+    {
+        "image_label": "pdff_feq",
+        "search_in": "SeriesDescription",
+        "search_for": "FeQ-PDFF",
+        "label_match": "water"
+    },
+    {
+        "image_label": "pdff",
+        "search_in": "ImageType",
+        "search_for": "FAT_FRACTION",
+        "label_match": "water"
+    },
+    {
+        "image_label": "water",
+        "search_in": "ImageType",
+        "search_for": "WATER",
+        "label_match": "pdff"
+    },
+]
 
 def phantom_pack(
         directory_path:str, 
@@ -43,15 +116,23 @@ def phantom_pack(
         span_mm=ANALYSIS_SPAN_MM,
         center_slice = ANALYSIS_CENTER_MM
     ):
-    all_dicoms = load_dicoms(directory_path)
-    img_pack_data = find_fw_pairs_byloc(all_dicoms)
-    # print image info
+
+    # load dicoms in directory
+    print("Loading files...")
+    time_load_start = time.perf_counter()
+    all_dicoms = load_dicoms(directory_path, turbo_mode=True)
+    time_load_end = time.perf_counter()
+    print(f"loaded {len(all_dicoms)} dicoms in {time_load_end - time_load_start:.2f} seconds")
+    
+    # sort out PDFF/Water image pairs
+    # img_pack_data = find_fw_pairs_byloc(all_dicoms)
+    img_pack_data = find_fw_pairs(all_dicoms)
     if len(img_pack_data) == 0:
         print(f"No PDFF/Water data found in {directory_path}")
         return {}
-    image_info = get_image_info(img_pack_data)
-    print(json.dumps(image_info, indent=2))
-    print(f'analyzing {len(img_pack_data)} pdff/water image pairs')
+    print(f'Analyzing {len(img_pack_data)} pdff/water image pairs')
+
+    # find circles in images
     img_pack_data = find_packs_in_images(
         img_pack_data,
         vial_radius=vial_radius,
@@ -60,21 +141,37 @@ def phantom_pack(
         )
     img_pack_data = sort_data_by_sliceloc(img_pack_data)
     create_rois(img_pack_data, roi_radius=roi_radius) # put ROIs from all found circles
+    
+    # find unqiue AcquisitionTimes and analyze a span of images centered at the midpoint of phantom
+    acq_times = [x['pdff'].AcquisitionTime for x in img_pack_data]
+    acq_times = list(set(acq_times))
+    print(f"Found {len(acq_times)} unique AcquisitionTimes")
+    for acq_time in acq_times:
+        img_pack_data_series = [x for x in img_pack_data if x['pdff'].AcquisitionTime == acq_time]
+        sliceslocations_in_middle_span = find_slices_in_span(
+            img_pack_data_series, 
+            span_mm = span_mm,
+            center = center_slice)    
+        composite_results = composite_statistics(img_pack_data_series, sliceslocations_in_middle_span)
+        print(json.dumps(composite_results, indent=2))
 
-    # analyze a span of images centered at the midpoint of phantom
-    sliceslocations_in_middle_span = find_slices_in_span(
-        img_pack_data, 
-        span_mm = span_mm,
-        center = center_slice)    
-    composite_results = composite_statistics(img_pack_data, sliceslocations_in_middle_span)
-    print(json.dumps(composite_results, indent=2))
+        # save and/or plot all images and circles
+        os.makedirs(os.path.join(directory_path, OUTPUT_DIR), exist_ok=True)
+        image_info = get_image_info(img_pack_data_series)
+        print(json.dumps(image_info, indent=2))
+        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{TIMESTAMP}_allimg.png")
+        plot_results(img_pack_data_series, dest_filepath=array_filepath, display_image=False)
+        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{TIMESTAMP}_selected.png")
+        img_pack_data_middlespan = [x for x in img_pack_data_series if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
+        plot_results(img_pack_data_middlespan, dest_filepath=array_filepath, display_image=False)
+        plot_slice_values(img_pack_data_series, vert_lines = sliceslocations_in_middle_span, directory_path=os.path.join(directory_path, OUTPUT_DIR))
 
-    # save and/or plot all images and circles
-    array_filepath = os.path.join(directory_path, f"{image_info['PatientName']}_{TIMESTAMP}_allimg.png")
-    plot_results(img_pack_data, dest_filepath=array_filepath, display_image=False)
-    plot_slice_values(img_pack_data)
-
-    all_results = composite_results | image_info
+        all_results = composite_results | image_info
+        if all_results:
+            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{all_results['PatientName']}_results_" + TIMESTAMP + ".json")
+            with open(file_path, 'w') as file:
+                json.dump(all_results, file, indent=4)
+            print(f"JSON data saved to {file_path}")
     return all_results
 
 def calc_mean_and_median(midpoint_image:dict):
@@ -313,18 +410,85 @@ def print_mean_median_values(pdff_means, pdff_medians):
     print(mean_str)
     print(median_str)
 
-def load_dicoms(directory_path:str):
+def load_dicoms(directory_path:str, turbo_mode=False):
+    if turbo_mode:
+        return load_dicoms_fromdir_quickly(directory_path)
+    return load_dicoms_fromdir(directory_path)
+
+def load_dicoms_fromdir(directory_path:str):
     dicoms = []
     for path, _, files in os.walk(directory_path):
-        for file in files:
-            try:
-                fp = os.path.join(path, file)
-                ds = pydicom.dcmread(fp)
-                ds.filepath = fp
-                dicoms.append(ds)
-            except:
-                continue
+        dicoms.extend(load_dicoms_fromlist(path, files))
     return dicoms
+
+def load_dicoms_fromlist(path, files:list[str]):
+    dicoms = []
+    for file in files:
+        try:
+            fp = os.path.join(path, file)
+            ds = pydicom.dcmread(fp)
+            ds.filepath = fp
+            dicoms.append(ds)
+        except:
+            continue
+    return dicoms
+
+def load_dicoms_fromdir_quickly(directory_path, extensions=None):
+    dicoms = []
+    # find first and last files, run tests, and load data if necessary
+    for path, _, files in os.walk(directory_path):
+        if len(files) == 0:
+            continue
+        #todo: remove files if do not match extension
+        files.sort()
+        indx = 0
+        ds_first = None
+        while True: #search for first file
+            if abs(indx) >= len(files):
+                break
+            try:
+                fp = os.path.join(path, files[indx])
+                ds_first = pydicom.dcmread(fp)
+                break
+            except:
+                indx += 1
+                continue
+        indx = -1
+        ds_last = None
+        while (ds_first):  # search for last file if a first file was found
+            if abs(indx) >= len(files):
+                break
+            try:
+                fp = os.path.join(path, files[indx])
+                ds_last = pydicom.dcmread(fp)
+                break
+            except:
+                indx -= 1
+                continue
+        #
+        if ds_first is None or ds_last is None:
+            continue
+
+        # test to see if we need to load this directory
+        load_these_files = False
+        # different series in one dir: load all
+        if (ds_first.SeriesInstanceUID != ds_last.SeriesInstanceUID): 
+            load_these_files = True
+        if (has_relevant_data(ds_first) or has_relevant_data(ds_last)):
+            load_these_files = True
+        if load_these_files:
+            additional_dicoms=load_dicoms_fromlist(path, files)
+            dicoms.extend(additional_dicoms)
+    return dicoms
+
+def has_relevant_data(ds:pydicom.Dataset) -> bool:
+    image_type = ds.get("ImageType")
+    series_desc = ds.get("SeriesDescription") 
+    if 'WATER' in image_type:           return True
+    if 'FAT_FRACTION' in image_type:    return True
+    if 'FeQ-PDFF' in series_desc:       return True
+    if 'FatFrac' in series_desc:        return True
+    if 'WATER' in series_desc:          return True
 
 def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.Dataset]:
     images = []
@@ -336,7 +500,6 @@ def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.D
 def find_fw_pairs_byloc(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
     waters = find_imagetype(all_dicoms, 'WATER')
     pdffs = find_imagetype(all_dicoms, 'FAT_FRACTION')
-    # create a list of tuples  [(pdff, water), ...] paired by location
     my_img_pack_data = []
     for wa in waters:
         for ff in pdffs:
@@ -349,6 +512,97 @@ def find_fw_pairs_byloc(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
                 break
     return my_img_pack_data
 
+def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
+    for ds in all_dicoms:
+        label_dataset(ds)
+        # add_label_to_ds(ds)
+
+    # Here were are matchmaking by enforcing the water image_label is same as pdff "label_match" tag
+    # AcquisitionTime is used to separate series
+    # SliceLocating is used to separate images
+    waters =[x for x in all_dicoms if x.image_label.startswith('water')] 
+    pdffs = [x for x in all_dicoms if x.image_label.startswith('pdff')]
+    my_img_pack_data = []
+    for ff in pdffs:
+        wat_match_label  = [x for x in waters if x.image_label == ff.label_match]
+        wat_same_acqtime = [x for x in wat_match_label if x.AcquisitionTime == ff.AcquisitionTime]
+        wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
+        if len(wat_same_loc) == 0:
+            print(f"WARNING: No water images matched to a pdff image")
+            #todo:  error dump
+        if len(wat_same_loc) > 1:
+            print(f"WARNING: Multiple water images matched to a single pdff image")
+            #todo:  error dump
+        if len(wat_same_loc) >= 1:
+            my_img_pack_data.append({
+                "pdff": ff,
+                "water": wat_same_loc[0],
+                "loc": ff.SliceLocation
+            })
+
+    # # Here we're limiting to basic water or pdff, ignoring the specific seq source,
+    # # and counting on AcquisitionTime to do the job
+    # waters =[x for x in all_dicoms if x.image_label.startswith('water')] 
+    # pdffs = [x for x in all_dicoms if x.image_label.startswith('pdff')]
+    # my_img_pack_data = []
+    # for ff in pdffs:
+    #     wat_sam_acqtime = [x for x in waters if x.AcquisitionTime == ff.AcquisitionTime]
+    #     wat_same_loc = [x for x in wat_sam_acqtime if x.SliceLocation == ff.SliceLocation]
+    #     if len(wat_same_loc) == 1:
+    #         my_img_pack_data.append({
+    #             "pdff": ff,
+    #             "water": wat_same_loc[0],
+    #             "loc": ff.SliceLocation
+    #         })
+    return my_img_pack_data
+
+def label_dataset(ds:pydicom.Dataset):
+    for id in identifying_labels:
+        if id["search_for"] in ds.get(id["search_in"]):
+            ds.image_label = id["image_label"]
+            ds.label_match = id["label_match"]
+            return
+
+
+def add_label_to_ds(ds:pydicom.Dataset):
+    ''' Labels are very specific to series type to help reduce the possibility of cross-polination'''
+    image_type = ds.get("ImageType")
+    series_desc = ds.get("SeriesDescription")
+    if 'FatFrac: BH new FAM Offline' in series_desc:       
+        ds.image_label = "pdff_fam_bh_offline"
+        return
+    if 'WATER: BH new FAM Offline' in series_desc:       
+        ds.image_label = "water_fam_bh_offline"
+        return
+    if 'FatFrac: BH new FAM' in series_desc:       
+        ds.image_label = "pdff_fam_bh"
+        return
+    if 'WATER: BH new FAM' in series_desc:       
+        ds.image_label = "water_fam_bh"
+        return
+    if 'FatFrac: FB new FAM Offline' in series_desc:       
+        ds.image_label = "pdff_fam_fb_offline"
+        return
+    if 'WATER: FB new FAM Offline' in series_desc:       
+        ds.image_label = "water_fam_fb_offline"
+        return
+    if 'FatFrac: FB new FAM' in series_desc:       
+        ds.image_label  = "pdff_fam_fb"
+        return
+    if 'WATER: FB new FAM' in series_desc:       
+        ds.image_label  = "water_fam_fb"
+        return
+    if 'FeQ-PDFF' in series_desc:       
+        ds.image_label = "pdff_feq"
+        return
+    if 'FAT_FRACTION' in image_type:       
+        ds.image_label = "pdff"
+        return
+    if 'WATER' in image_type:       
+        ds.image_label = "water"
+        return
+    ds.image_label = "unknown"
+    
 
 def find_circles(img, minDist=0.01, param1=300, param2=10, minRadius=2, maxRadius=20):
     # # docstring of HoughCircles: 
@@ -592,11 +846,16 @@ def masked_stddev(image, mask) -> float:
 def get_image_info(img_pack_data:list[dict]) -> dict:
     info = {}
     pdff = img_pack_data[0]["pdff"]
+    water = img_pack_data[0]["water"]
     for tag in DICOM_TAG_LIST:
         info[tag] = str(pdff.get(tag))
+    info["SeriesDescription_pdff"] = pdff.get("SeriesDescription")
+    info["SeriesDescription_water"] = water.get("SeriesDescription")
+    info["SeriesNumber_pdff"] = pdff.get("SeriesNumber")
+    info["SeriesNumber_water"] = water.get("SeriesNumber")
     return info
 
-def plot_slice_values(img_pack_data:list[dict]):
+def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''):
     # each entry in this will will be the 5 vials  in a slice
     pdff_means = []
     pdff_medians = []
@@ -616,6 +875,9 @@ def plot_slice_values(img_pack_data:list[dict]):
 
     for i in range(data_means.shape[0]):
         plt.errorbar(slice_locations, data_means[i],  yerr=data_stddevs[i], fmt='-o', label=f"Mean {i}")
+    if len(vert_lines) > 0:
+        plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
+        plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
     plt.title("Mean +/- StdDev across slices for each ROI")
     plt.xlabel("Slice Location")
     plt.ylabel("Mean PDFF")
@@ -628,6 +890,9 @@ def plot_slice_values(img_pack_data:list[dict]):
 
     for i in range(data_means.shape[0]):
         plt.plot(slice_locations, data_medians[i], '-x', label=f"Median {i}")
+    if len(vert_lines) > 0: 
+        plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
+        plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
     plt.title("Meadian PDFF across slices for each ROI")
     plt.xlabel("Slice Location")
     plt.ylabel("Median PDFF")
@@ -643,10 +908,4 @@ if __name__ == "__main__":
     directory_path = sys.argv[1]
     print(f"Processing {directory_path}")
     results = phantom_pack(directory_path)
-    if results == {}:
-        sys.exit(1)
-    file_path = os.path.join(directory_path, f"{results['PatientName']}_results_" + TIMESTAMP + ".json")
-    with open(file_path, 'w') as file:
-        json.dump(results, file, indent=4)
-    print(f"JSON data saved to {file_path}")
-    sys.exit(0)
+    
