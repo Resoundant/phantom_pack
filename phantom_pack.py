@@ -515,7 +515,6 @@ def find_fw_pairs_byloc(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
 def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
     for ds in all_dicoms:
         label_dataset(ds)
-        # add_label_to_ds(ds)
 
     # Here were are matchmaking by enforcing the water image_label is same as pdff "label_match" tag
     # AcquisitionTime is used to separate series
@@ -562,47 +561,11 @@ def label_dataset(ds:pydicom.Dataset):
             ds.image_label = id["image_label"]
             ds.label_match = id["label_match"]
             return
-
-
-def add_label_to_ds(ds:pydicom.Dataset):
-    ''' Labels are very specific to series type to help reduce the possibility of cross-polination'''
-    image_type = ds.get("ImageType")
-    series_desc = ds.get("SeriesDescription")
-    if 'FatFrac: BH new FAM Offline' in series_desc:       
-        ds.image_label = "pdff_fam_bh_offline"
-        return
-    if 'WATER: BH new FAM Offline' in series_desc:       
-        ds.image_label = "water_fam_bh_offline"
-        return
-    if 'FatFrac: BH new FAM' in series_desc:       
-        ds.image_label = "pdff_fam_bh"
-        return
-    if 'WATER: BH new FAM' in series_desc:       
-        ds.image_label = "water_fam_bh"
-        return
-    if 'FatFrac: FB new FAM Offline' in series_desc:       
-        ds.image_label = "pdff_fam_fb_offline"
-        return
-    if 'WATER: FB new FAM Offline' in series_desc:       
-        ds.image_label = "water_fam_fb_offline"
-        return
-    if 'FatFrac: FB new FAM' in series_desc:       
-        ds.image_label  = "pdff_fam_fb"
-        return
-    if 'WATER: FB new FAM' in series_desc:       
-        ds.image_label  = "water_fam_fb"
-        return
-    if 'FeQ-PDFF' in series_desc:       
-        ds.image_label = "pdff_feq"
-        return
-    if 'FAT_FRACTION' in image_type:       
-        ds.image_label = "pdff"
-        return
-    if 'WATER' in image_type:       
-        ds.image_label = "water"
-        return
+    # no label matched, set to unknown so the field exists
     ds.image_label = "unknown"
-    
+    ds.label_match = "unknown"
+    return
+
 
 def find_circles(img, minDist=0.01, param1=300, param2=10, minRadius=2, maxRadius=20):
     # # docstring of HoughCircles: 

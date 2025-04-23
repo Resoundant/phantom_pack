@@ -14,9 +14,13 @@ Python 3.10 or 3.11 recommended.
 ### Run
 `python phantom_pack.py <input_directory>`
 
-Or on a folder than contains multiple patient-exams:
+results will be in <input_directory>/phatompack_results/
+
+To batch process a folder than contains multiple patient-exams:
 
 `python phantom_pack_batch.py <top_directory>`
+
+will loop over each subfolder in <top_directory> as if running individually
 
 ### Theory of operation
 PhantomPack finder is meant to operate on a single patient-exam, contained within the provided <input_directory>.  This directory will be scanned and load DICOM files.  PDFF and water images are identified by their ImageType and SeriesDescription tags.  PDFF images will be paired with a Water image by their acquisition sequence, AcquisitionTime, and SliceLocation tags.  This is meant to  descriminate related series from one another.
