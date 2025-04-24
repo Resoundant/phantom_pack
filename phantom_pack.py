@@ -874,7 +874,7 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     plt.legend()
     plt.grid(True)
     # plt.show()
-    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_mean_stddev_{pdff_series_number}.png")
+    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_{pdff_series_number}_mean_stddev.png")
     plt.savefig(img_filepath)
     plt.close()
 
@@ -889,7 +889,7 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     plt.legend()
     plt.grid(True)
     # plt.show()
-    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_median_{TIMESTAMP}.png")
+    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_{pdff_series_number}_median.png")
     plt.savefig(img_filepath)
     plt.close()
     
