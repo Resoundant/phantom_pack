@@ -9,6 +9,10 @@ import json
 import matplotlib.pyplot as plt
 import time
 
+# debug flags
+DEBUG_VERBOSE = False
+MATCH_TRACE = True
+
 # Phantom pack and analysis parameters
 OUTPUT_DIR = "phantompack_results"
 VIAL_RADIUS_MM = 19/2      # radius of the phantom pack vials
@@ -123,55 +127,71 @@ def phantom_pack(
     all_dicoms = load_dicoms(directory_path, turbo_mode=True)
     time_load_end = time.perf_counter()
     print(f"loaded {len(all_dicoms)} dicoms in {time_load_end - time_load_start:.2f} seconds")
+    # check for duplicates
+    check_for_duplicates(all_dicoms)
     
     # sort out PDFF/Water image pairs
-    # img_pack_data = find_fw_pairs_byloc(all_dicoms)
-    img_pack_data = find_fw_pairs(all_dicoms)
-    if len(img_pack_data) == 0:
+    img_packs = find_fw_pairs(all_dicoms)
+    if len(img_packs) == 0:
         print(f"No PDFF/Water data found in {directory_path}")
         return {}
-    print(f'Analyzing {len(img_pack_data)} pdff/water image pairs')
+    print(f'Found {len(img_packs)} pdff/water series')
 
-    # find circles in images
-    img_pack_data = find_packs_in_images(
-        img_pack_data,
-        vial_radius=vial_radius,
-        radius_tolerance=radius_tolerance,
-        vert_align_tol=vert_align_tol
-        )
-    img_pack_data = sort_data_by_sliceloc(img_pack_data)
-    create_rois(img_pack_data, roi_radius=roi_radius) # put ROIs from all found circles
-    
-    # find unqiue AcquisitionTimes and analyze a span of images centered at the midpoint of phantom
-    acq_times = [x['pdff'].AcquisitionTime for x in img_pack_data]
-    acq_times = list(set(acq_times))
-    print(f"Found {len(acq_times)} unique AcquisitionTimes")
-    for acq_time in acq_times:
-        img_pack_data_series = [x for x in img_pack_data if x['pdff'].AcquisitionTime == acq_time]
+    all_results = []
+    for img_pack_data in img_packs:
+        print(f"Processing PDFF series {img_pack_data[0]['pdff'].SeriesNumber} {img_pack_data[0]['pdff'].SeriesDescription}")
+        # find circles in images
+        img_pack_data = find_packs_in_images(
+            img_pack_data,
+            vial_radius=vial_radius,
+            radius_tolerance=radius_tolerance,
+            vert_align_tol=vert_align_tol
+            )
+        img_pack_data = sort_data_by_sliceloc(img_pack_data)
+        create_rois(img_pack_data, roi_radius=roi_radius) # put ROIs from all found circles
+        
         sliceslocations_in_middle_span = find_slices_in_span(
-            img_pack_data_series, 
+            img_pack_data, 
             span_mm = span_mm,
-            center = center_slice)    
-        composite_results = composite_statistics(img_pack_data_series, sliceslocations_in_middle_span)
-        print(json.dumps(composite_results, indent=2))
+            center = center_slice)
+        if len(sliceslocations_in_middle_span) == 0:
+            continue
+        composite_results = composite_statistics(img_pack_data, sliceslocations_in_middle_span)
+        # print(json.dumps(composite_results, indent=2))
 
-        # save and/or plot all images and circles
+        # collect info about dataset
         os.makedirs(os.path.join(directory_path, OUTPUT_DIR), exist_ok=True)
-        image_info = get_image_info(img_pack_data_series)
-        print(json.dumps(image_info, indent=2))
-        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{TIMESTAMP}_allimg.png")
-        plot_results(img_pack_data_series, dest_filepath=array_filepath, display_image=False)
-        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{TIMESTAMP}_selected.png")
-        img_pack_data_middlespan = [x for x in img_pack_data_series if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
+        image_info = get_image_info(img_pack_data)
+        # print(json.dumps(image_info, indent=2))
+        # save image of all pdff water pairs
+        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+        plot_results(img_pack_data, dest_filepath=array_filepath, display_image=False)
+        # save image of just the selected slices
+        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+        img_pack_data_middlespan = [x for x in img_pack_data if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
         plot_results(img_pack_data_middlespan, dest_filepath=array_filepath, display_image=False)
-        plot_slice_values(img_pack_data_series, vert_lines = sliceslocations_in_middle_span, directory_path=os.path.join(directory_path, OUTPUT_DIR))
+        # save plots of slice values
+        plot_slice_values(img_pack_data, vert_lines = sliceslocations_in_middle_span, directory_path=os.path.join(directory_path, OUTPUT_DIR))
 
-        all_results = composite_results | image_info
-        if all_results:
-            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{all_results['PatientName']}_results_" + TIMESTAMP + ".json")
+        results = composite_results | image_info
+        if results:
+            all_results.append(results)
+            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
             with open(file_path, 'w') as file:
-                json.dump(all_results, file, indent=4)
-            print(f"JSON data saved to {file_path}")
+                json.dump(results, file, indent=4)
+            print(f"  JSON data saved to {file_path}")
+        if MATCH_TRACE:
+            trace_data = []
+            for imgs in img_pack_data:
+                trace_data.append({
+                    "pdff_trace" : f"Series {imgs['pdff'].SeriesNumber}, Instance {imgs['pdff'].InstanceNumber}",
+                    "water_trace" : f"Series {imgs['water'].SeriesNumber}, Instance {imgs['water'].InstanceNumber}",
+                    "pdff_filename" : f"Series {imgs['pdff'].filename}",
+                    "water_filename" : f"Series {imgs['water'].filename}",
+                })
+            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
+            with open(file_path, 'w') as file:
+                json.dump(trace_data, file, indent=4)
     return all_results
 
 def calc_mean_and_median(midpoint_image:dict):
@@ -307,7 +327,7 @@ def find_packs_in_images(img_pack_data:list[dict],
         mydict["circles"] = pack_circles
 
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
-    print(f"found {len(count_circles)} slices where phantom pack is present")
+    print(f"  found {len(count_circles)} slices where phantom pack is present")
 
     return img_pack_data
 
@@ -348,11 +368,11 @@ def find_midpoint_slicelocation(img_pack_data:list[dict]):
         locations.append(phc["water"].SliceLocation)
     if locations == []:
         print("No phantom packs found in images")
-        exit()
+        return
     locations = sorted(list(set(locations))) # remove duplicates
     midpoint_geo = locations[0] + (locations[-1] - locations[0])/2
     midpoint_loc = find_closest_value(locations, midpoint_geo)
-    print(f"Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
+    print(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
     return midpoint_loc
 
 def find_slices_in_span(img_pack_data:list[dict], span_mm=50, center=None) -> list[float]:
@@ -361,17 +381,18 @@ def find_slices_in_span(img_pack_data:list[dict], span_mm=50, center=None) -> li
     locations = []
     if center is None:
         center = find_midpoint_slicelocation(img_pack_data)
+        if center is None:
+            return []
     for phc in img_pack_data:
         if phc["circles"] is None:
             continue
         locations.append(phc["water"].SliceLocation)
     if locations == []:
         print("No phantom packs found in images")
-        exit()
     locations = sorted(list(set(locations))) # remove duplicates
     midpoint_loc = locations[0] + (locations[-1] - locations[0])/2
     locations_in_span = [x for x in locations if (x >= midpoint_loc - span_mm/2 and x <= midpoint_loc + span_mm/2)]
-    print(f"analyzing {len(locations_in_span)} images in span of +/-{span_mm/2}mm around {midpoint_loc}")
+    print(f"  analyzing {len(locations_in_span)} images in span of +/-{span_mm/2}mm around {midpoint_loc}")
     return locations_in_span
 
 def create_rois_from_circles(circles, pixel_size):
@@ -415,7 +436,7 @@ def load_dicoms(directory_path:str, turbo_mode=False):
         return load_dicoms_fromdir_quickly(directory_path)
     return load_dicoms_fromdir(directory_path)
 
-def load_dicoms_fromdir(directory_path:str):
+def load_dicoms_fromdir(directory_path:str) -> list[pydicom.Dataset]:
     dicoms = []
     for path, _, files in os.walk(directory_path):
         dicoms.extend(load_dicoms_fromlist(path, files))
@@ -427,7 +448,7 @@ def load_dicoms_fromlist(path, files:list[str]):
         try:
             fp = os.path.join(path, file)
             ds = pydicom.dcmread(fp)
-            ds.filepath = fp
+            # ds.filepath = fp # already in filename
             dicoms.append(ds)
         except:
             continue
@@ -478,17 +499,27 @@ def load_dicoms_fromdir_quickly(directory_path, extensions=None):
             load_these_files = True
         if load_these_files:
             additional_dicoms=load_dicoms_fromlist(path, files)
-            dicoms.extend(additional_dicoms)
+            dicoms.extend(additional_dicoms) 
     return dicoms
 
 def has_relevant_data(ds:pydicom.Dataset) -> bool:
     image_type = ds.get("ImageType")
     series_desc = ds.get("SeriesDescription") 
-    if 'WATER' in image_type:           return True
-    if 'FAT_FRACTION' in image_type:    return True
-    if 'FeQ-PDFF' in series_desc:       return True
-    if 'FatFrac' in series_desc:        return True
-    if 'WATER' in series_desc:          return True
+    if image_type:
+        if 'WATER' in image_type:           return True
+        if 'FAT_FRACTION' in image_type:    return True
+    if series_desc:
+        if 'FeQ-PDFF' in series_desc:       return True
+        if 'FatFrac' in series_desc:        return True
+        if 'PDFF' in series_desc:           return True
+        if 'WATER' in series_desc:          return True
+
+def check_for_duplicates(all_dicoms):
+    seen = set()
+    for ds in all_dicoms:
+        if ds.filename in seen:
+            print(f"Duplicate file found: {ds.filename}")
+        seen.add(ds.filename)
 
 def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.Dataset]:
     images = []
@@ -497,73 +528,68 @@ def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.D
             images.append(ds)
     return images
 
-def find_fw_pairs_byloc(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
-    waters = find_imagetype(all_dicoms, 'WATER')
-    pdffs = find_imagetype(all_dicoms, 'FAT_FRACTION')
-    my_img_pack_data = []
-    for wa in waters:
-        for ff in pdffs:
-            if (wa.SliceLocation == ff.SliceLocation):
-                my_img_pack_data.append({
-                    "pdff": ff,
-                    "water": wa,
-                    "loc": wa.SliceLocation
-                })
-                break
-    return my_img_pack_data
+# def find_fw_pairs_byloc(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
+#     waters = find_imagetype(all_dicoms, 'WATER')
+#     pdffs = find_imagetype(all_dicoms, 'FAT_FRACTION')
+#     my_img_pack_data = []
+#     for wa in waters:
+#         for ff in pdffs:
+#             if (wa.SliceLocation == ff.SliceLocation):
+#                 my_img_pack_data.append({
+#                     "pdff": ff,
+#                     "water": wa,
+#                     "loc": wa.SliceLocation
+#                 })
+#                 break
+#     return my_img_pack_data
 
 def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
     for ds in all_dicoms:
         label_dataset(ds)
 
     # Here were are matchmaking by enforcing the water image_label is same as pdff "label_match" tag
-    # AcquisitionTime is used to separate series
+    # AcquisitionTime and SeriesNumber are used to separate series
     # SliceLocating is used to separate images
+    img_packs = []
     waters =[x for x in all_dicoms if x.image_label.startswith('water')] 
     pdffs = [x for x in all_dicoms if x.image_label.startswith('pdff')]
-    my_img_pack_data = []
-    for ff in pdffs:
-        wat_match_label  = [x for x in waters if x.image_label == ff.label_match]
-        wat_same_acqtime = [x for x in wat_match_label if x.AcquisitionTime == ff.AcquisitionTime]
-        wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
-        if len(wat_same_loc) == 0:
-            print(f"WARNING: No water images matched to a pdff image")
-            #todo:  error dump
-        if len(wat_same_loc) > 1:
-            print(f"WARNING: Multiple water images matched to a single pdff image")
-            #todo:  error dump
-        if len(wat_same_loc) >= 1:
-            my_img_pack_data.append({
-                "pdff": ff,
-                "water": wat_same_loc[0],
-                "loc": ff.SliceLocation
-            })
-
-    # # Here we're limiting to basic water or pdff, ignoring the specific seq source,
-    # # and counting on AcquisitionTime to do the job
-    # waters =[x for x in all_dicoms if x.image_label.startswith('water')] 
-    # pdffs = [x for x in all_dicoms if x.image_label.startswith('pdff')]
-    # my_img_pack_data = []
-    # for ff in pdffs:
-    #     wat_sam_acqtime = [x for x in waters if x.AcquisitionTime == ff.AcquisitionTime]
-    #     wat_same_loc = [x for x in wat_sam_acqtime if x.SliceLocation == ff.SliceLocation]
-    #     if len(wat_same_loc) == 1:
-    #         my_img_pack_data.append({
-    #             "pdff": ff,
-    #             "water": wat_same_loc[0],
-    #             "loc": ff.SliceLocation
-    #         })
-    return my_img_pack_data
+    # split up pdff's by series number
+    series_numbers = list(set([x.SeriesNumber for x in pdffs]))
+    for sn in series_numbers:
+        my_img_pack_data = []
+        pdff_series = [x for x in pdffs if x.SeriesNumber == sn]
+        for ff in pdff_series:
+            wat_match_label  = [x for x in waters if x.image_label == ff.label_match]
+            wat_same_acqtime = [x for x in wat_match_label if x.AcquisitionTime == ff.AcquisitionTime]
+            wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
+            if len(wat_same_loc) == 0:
+                print(f"WARNING: No water images matched to a pdff image")
+                #todo:  error dump
+            if len(wat_same_loc) > 1:
+                print(f"WARNING: Multiple water images matched to a single pdff image")
+                #todo:  error dump
+            if len(wat_same_loc) >= 1:
+                my_img_pack_data.append({
+                    "pdff": ff,
+                    "water": wat_same_loc[0],
+                    "loc": ff.SliceLocation
+                })
+        img_packs.append(my_img_pack_data)
+    return img_packs
 
 def label_dataset(ds:pydicom.Dataset):
     for id in identifying_labels:
         if id["search_for"] in ds.get(id["search_in"]):
             ds.image_label = id["image_label"]
             ds.label_match = id["label_match"]
+            # if (DEBUG_VERBOSE):
+            #     print(f"{ds.get('SeriesDescription')} {ds.get('SeriesNumber')} {ds.get('InstanceNumber')} ==> {ds.image_label}")
             return
     # no label matched, set to unknown so the field exists
     ds.image_label = "unknown"
     ds.label_match = "unknown"
+    # if (DEBUG_VERBOSE):
+    #     print(f"{ds.get('SeriesDescription')} {ds.get('SeriesNumber')} {ds.get('InstanceNumber')} ==> {ds.image_label}")
     return
 
 
@@ -720,7 +746,7 @@ def plot_array(img_pack_data:list[dict], dest_filepath:str=None,display_image=Fa
 def plot_results(img_pack_data:list[dict], dest_filepath:str=None, display_image=False):
     """Plot PDFF and water images with ROIs using OpenCV."""
     cols = 2
-    rows = np.uint8(len(img_pack_data))
+    rows = np.uint32(len(img_pack_data))
     # Create a blank canvas to hold the images
     cimg_setup = cv2.cvtColor(np.uint8(img_pack_data[0]["water"].pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
     height, width, channels = cimg_setup.shape
@@ -824,6 +850,7 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     pdff_medians = []
     pdff_stddevs = []
     slice_locations = []
+    pdff_series_number = img_pack_data[0]["pdff"].SeriesNumber
     for img in img_pack_data:
         mystats = slice_stats(img)
         pdff_means.append(mystats['pdff_means'])
@@ -847,7 +874,7 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     plt.legend()
     plt.grid(True)
     # plt.show()
-    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_mean_stddev_{TIMESTAMP}.png")
+    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_mean_stddev_{pdff_series_number}.png")
     plt.savefig(img_filepath)
     plt.close()
 
