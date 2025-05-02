@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # debug flags
 DEBUG_VERBOSE = False
-MATCH_TRACE = True
+MATCH_TRACE = False
 
 # Phantom pack and analysis parameters
 OUTPUT_DIR = "phantompack_results"
@@ -55,7 +55,9 @@ def phantom_pack(
         roi_radius = ROI_RADIUS_MM,
         span_mm=ANALYSIS_SPAN_MM,
         center_point = ANALYSIS_CENTER_MM
-    ):
+    ) -> list[dict]:
+    # process all pdff data in directory_path
+    # return a list of dictionaries containing results for each pdff/water pair
 
     # prepare output directory
     output_dir = os.path.join(directory_path, OUTPUT_DIR)
@@ -103,6 +105,8 @@ def phantom_pack(
 
     all_results = []
     for img_pack_data in img_packs:
+        if len(img_pack_data) == 0: # no data
+            continue
         print(f"Processing PDFF series {img_pack_data[0]['pdff'].SeriesNumber} {img_pack_data[0]['pdff'].SeriesDescription}")
         # find circles in images
         #test
@@ -242,14 +246,16 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
             vals = apply_mask(pdff.pixel_array, mask)
             masked_values[roi_index].extend(vals)
             roi_index += 1
-    # caste in np.array to take mean of each row, where a row contains the values for rois across slices
+    # cast into np.array to take mean of each row, where a row contains the values for rois across slices
     np_arr = np.array(masked_values)
     # calculate mean across slices for a given roi
     results_dict = {}
-    results_dict['means'] = np.mean(np_arr, axis=1).tolist()
+    results_dict['means']    = np.mean(np_arr, axis=1).tolist()
+    results_dict['stddevs']  = np.std(np_arr, axis=1).tolist()
     results_dict['medians']  = np.median(np_arr, axis=1).tolist()
-    results_dict['mins'] = np.min(np_arr, axis=1).tolist()
-    results_dict['maxs'] = np.max(np_arr, axis=1).tolist()
+    results_dict['mins']     = np.min(np_arr, axis=1).tolist()
+    results_dict['maxs']     = np.max(np_arr, axis=1).tolist()
+    results_dict['samples']  = [np_arr.shape[1]]*5
     return results_dict
 
 def composite_statistics_fromlist(img_pack_data:list[dict], sliceslocs_to_analyze:list) -> dict:
@@ -301,7 +307,7 @@ def find_packs_in_images(img_pack_data:list[dict],
         roi_radius = ROI_RADIUS_MM,
         ) -> list[dict]:
     ''' 
-        Finds circles in pdff/water image pairs and returns a tuple of 
+        Finds circles in pdff/water image pairs and returns a dictionary of 
         pdff_img, water_img, pack_circles
     '''
     for mydict in img_pack_data:
@@ -311,8 +317,7 @@ def find_packs_in_images(img_pack_data:list[dict],
         max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
         min_vail_sep = vial_radius/px_size
         # mask top portion of water image and find circles in what remains
-        water_for_hough = make_clipped_image(water_ds.pixel_array)
-        water_circles = find_circles(water_for_hough, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
+        water_circles = circles_in_water(water_ds, min_radius, max_radius, min_vail_sep)
         if water_circles is None:
             mydict["circles"] = None
             continue
@@ -321,16 +326,29 @@ def find_packs_in_images(img_pack_data:list[dict],
             num_circles=5,
             row_tolerance_px=VERTICAL_ALIGNMENT_TOLERANCE_MM/px_size,
             expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
-            )
+        )
+        # if pack_circles is None:
+            # try to extrapolate 3 or 4 circles into a pack
+            # pack_circles = find_phantom_pack_extrapolate(
+            #     water_circles,
+            #     pdff = mydict["pdff"],
+            #     water = mydict["water"],
+            #     min_circles = 3,
+            # )
+            
         if pack_circles is None:
             mydict["circles"] = None
             continue
         pack_circles = sort_circles_by_x(pack_circles)
-        # print(pack_circles) #debug, to be sure circles are sorted left to right
         mydict["circles"] = pack_circles
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
     print(f"  {len(count_circles)} slices contain phantom pack")
     return img_pack_data
+
+def circles_in_water(water_ds, min_radius, max_radius, min_vail_sep):
+    water_for_hough = make_clipped_image(water_ds.pixel_array)
+    water_circles = find_circles(water_for_hough, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
+    return water_circles
 
 def find_pack_in_pdff(img_pack_data:list[dict],
         vial_radius,
@@ -343,26 +361,22 @@ def find_pack_in_pdff(img_pack_data:list[dict],
         pdff_img, water_img, pack_circles
     '''
     for mydict in img_pack_data:
-        water_ds = mydict["pdff"]
-        px_size = water_ds.PixelSpacing[0]
+        ds = mydict["pdff"]
+        px_size = ds.PixelSpacing[0]
         min_radius = int(vial_radius/px_size) - int(radius_tolerance/px_size)
         max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
         min_vail_sep = vial_radius/px_size
         # mask top portion of water image and find circles in what remains
-        #invert image
-        max_px = np.max(water_ds.pixel_array)
-        water_for_hough = max_px - water_ds.pixel_array
-        water_for_hough = make_clipped_image(water_for_hough)
-        water_circles = find_circles(water_for_hough, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
-        if water_circles is None:
+        my_circles = circles_in_pdff(ds, min_radius, max_radius, min_vail_sep)
+        if my_circles is None:
             mydict["circles"] = None
             continue
-        pack_circles = find_phantom_pack(
-            water_circles, 
-            num_circles=5,
-            row_tolerance_px=VERTICAL_ALIGNMENT_TOLERANCE_MM/px_size,
-            expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
-            )
+        # pack_circles = find_phantom_pack(
+        #     my_circles, 
+        #     num_circles=5,
+        #     row_tolerance_px=VERTICAL_ALIGNMENT_TOLERANCE_MM/px_size,
+        #     expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
+        #     )
         if pack_circles is None:
             mydict["circles"] = None
             continue
@@ -372,6 +386,12 @@ def find_pack_in_pdff(img_pack_data:list[dict],
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
     print(f"  found {len(count_circles)} slices where phantom pack is present")
     return img_pack_data
+
+def circles_in_pdff(ds, min_radius, max_radius, min_sep):
+    img_for_hough = create_negative_image(ds.pixel_array)
+    img_for_hough = make_clipped_image(img_for_hough)
+    my_circles = find_circles(img_for_hough, minDist=min_sep, minRadius=min_radius, maxRadius=max_radius)
+    return my_circles
     
 
 def sort_circles_by_x(circles:np.ndarray):
@@ -591,11 +611,9 @@ def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
             wat_same_acqtime = [x for x in wat_match_label if acq_time_inrange(ff.AcquisitionTime, x.AcquisitionTime)]
             wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
             if len(wat_same_loc) == 0:
-                print(f"WARNING: PDFF no water match: {ff.SeriesDescription}, SerNum {ff.SeriesNumber}, AcqTime {ff.AcquisitionTime}, Loc {ff.SliceLocation}")
-                logger.warning(f"PDFF no water match: {ff.SeriesDescription}, SerNum {ff.SeriesNumber}, AcqTime {ff.AcquisitionTime}, Loc {ff.SliceLocation}")
+                logger.warning(f"WARNING: PDFF no water match: {ff.SeriesDescription}, SerNum {ff.SeriesNumber}, AcqTime {ff.AcquisitionTime}, Loc {ff.SliceLocation}")
             if len(wat_same_loc) > 1:
-                print(f"WARNING: Multiple water images matched to a single pdff image")
-                logger.warning(f"PDFF no water match: {ff.SeriesDescription} {ff.SeriesNumber} {ff.AcquisitionTime} {ff.SliceLocation}")
+                logger.warning(f"WARNING: PDFF no water match: {ff.SeriesDescription} {ff.SeriesNumber} {ff.AcquisitionTime} {ff.SliceLocation}")
                 for w in wat_same_loc:
                     logger.warning(f"  {w.SeriesDescription} {w.SeriesNumber} {w.AcquisitionTime} {w.SliceLocation}")
             if len(wat_same_loc) >= 1:
@@ -696,6 +714,63 @@ def find_phantom_pack(
     # # only keep circles in expected_sep +/- px_tolerance
     # if expected_sep != None:
     #     return phantoms
+    
+    return phantoms
+
+def find_phantom_pack_extrapolate(
+        circles_in,
+        pdff, 
+        water, 
+        min_circles,
+        row_tolerance_px = 99,
+        expected_radius = None
+        ):
+    """
+    TODO docstring
+
+    """
+    phantoms = []
+    if (circles_in.shape[1] < min_circles):
+        return None
+    # Sort circles by y-coordinate to facilitate grouping
+    circles = np.uint16(np.around(circles_in))
+    circles = circles[0,:]
+    circles = sorted(circles, key=lambda c: c[1])
+    
+    # Find all groups of circles that have similar y-coordinates
+    # bug: this will duplicate rows, leaving off first entry in each subsequent row
+    horizontal_groups = []
+    for i in range(len(circles)):
+        group = [circles[i]]
+        for j in range(i + 1, len(circles)):
+            if abs(int(circles[j][1]) - int(circles[i][1])) <= row_tolerance_px:
+                group.append(circles[j])
+        horizontal_groups.append(group)
+
+    # only keep horizontal groups with at least 5 circles
+    phantoms = [g for g in horizontal_groups if len(g) >= min_circles]
+    if phantoms == []:
+        return None
+
+    # only keep circles in expected_radius +/- px_tolerance
+    if expected_radius != None:
+        similar_radius = []
+        for row in phantoms:
+            # phantoms = [g for g in row if (abs(float(c[2]) - expected_radius[0]) <= expected_radius[1] for c in g)]
+            g = []
+            for c in row:
+                radius = abs(float(c[2]) - expected_radius[0]) 
+                if radius <= expected_radius[1]:
+                    g.append(c)
+            similar_radius.append(g)
+        phantoms = similar_radius
+
+    # keep only simarly-radius groups that meet minimum num circles
+    phantoms = [g for g in phantoms if len(g) >= min_circles]
+    if phantoms == []:
+        return None
+    phantoms = phantoms[0] # hack: keep only first group in nested list
+
     
     return phantoms
 
@@ -924,3 +999,10 @@ if __name__ == "__main__":
     print(f"Processing {directory_path}")
     results = phantom_pack(directory_path)
     
+
+    # testimg_path = r'C:\testdata\PhantomPack\PQ024\SER00090\IMG00019.dcm'
+    # directory_path = os.path.dirname(testimg_path)
+    # ds = pydicom.dcmread(testimg_path)
+    # circles_in_pdff(ds, min_radius=1, max_radius=60, min_sep=1)
+
+

@@ -3,3 +3,5 @@ opencv-python==4.8.1.78
 Pillow==10.1.0
 pydicom==2.4.4
 matplotlib
+pandas
+openpyxl
