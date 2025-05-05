@@ -192,7 +192,6 @@ def calc_mean_and_median(midpoint_image:dict):
         # make a circle mask that can be applied to pdff
         mask = np.zeros(water.pixel_array.shape, dtype=np.uint8)
         cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
-        # cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
         # calculate mean and median
         mean_pdff = masked_mean(pdff.pixel_array, mask)
         median_pdff = masked_median(pdff.pixel_array, mask)
@@ -264,6 +263,19 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
     results_dict['mins']     = np.min(np_arr, axis=1).tolist()
     results_dict['maxs']     = np.max(np_arr, axis=1).tolist()
     results_dict['samples']  = [np_arr.shape[1]]*5
+    results_dict = renormalize_stats(results_dict)
+    return results_dict
+
+def renormalize_stats(results_dict:dict) -> dict:
+    # check mean value of the middle vial; it should always be 30% (20-40) if we find it is >101, renormalize by dividing by 100
+    if results_dict["means"][2] < 101:
+        results_dict["renormalized"] = False
+        return results_dict
+    results_dict["renormalized"] = True
+    for key in results_dict.keys():
+        if key == "renormalized": continue
+        if key == "samples": continue
+        results_dict[key] = [x/100 for x in results_dict[key]]
     return results_dict
 
 def get_values_in_roi(pdff, r) -> list:
