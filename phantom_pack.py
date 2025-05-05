@@ -15,11 +15,17 @@ logger = logging.getLogger(__name__)
 
 # debug flags
 DEBUG_VERBOSE = False
+DEBUG_PLOTS = False
 MATCH_TRACE = False
+# circle index helpers
+CX = 0
+CY = 1
+CR = 2
 
 # Phantom pack and analysis parameters
 OUTPUT_DIR = "phantompack_results"
 VIAL_RADIUS_MM = 19/2      # radius of the phantom pack vials
+VIAL_SEP_MM = 31           # 20px*1.56mm/px
 ROI_RADIUS_MM = 13/2       # radius of the phantom pack ROI
 RADIUS_TOLERANCE_MM = 4    # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
 VERTICAL_ALIGNMENT_TOLERANCE_MM = 7
@@ -107,21 +113,17 @@ def phantom_pack(
     for img_pack_data in img_packs:
         if len(img_pack_data) == 0: # no data
             continue
+        print("")
         print(f"Processing PDFF series {img_pack_data[0]['pdff'].SeriesNumber} {img_pack_data[0]['pdff'].SeriesDescription}")
+        print(f"     with WATER series {img_pack_data[0]['water'].SeriesNumber} {img_pack_data[0]['water'].SeriesDescription}")
         # find circles in images
-        #test
-        # pdff_pack = find_pack_in_pdff(
-        #     img_pack_data,
-        #     vial_radius=vial_radius,
-        #     radius_tolerance=radius_tolerance,
-        #     vert_align_tol=vert_align_tol
-        #     )
+        # restore this
         img_pack_data = find_packs_in_images(
             img_pack_data,
             vial_radius=vial_radius,
             radius_tolerance=radius_tolerance,
             vert_align_tol=vert_align_tol
-            )
+        )
         img_pack_data = sort_data_by_sliceloc(img_pack_data)
         create_rois(img_pack_data, roi_radius=roi_radius) # put ROIs from all found circles
         
@@ -142,7 +144,7 @@ def phantom_pack(
         plot_results(img_pack_data, dest_filepath=array_filepath, display_image=False)
         # save image of just the selected slices
         array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-        img_pack_data_middlespan = [x for x in img_pack_data if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
+        img_pack_data_middlespan = img_data_in_span(img_pack_data, sliceslocations_in_middle_span)
         plot_results(img_pack_data_middlespan, dest_filepath=array_filepath, display_image=False)
         # save plots of slice values
         plot_slice_values(img_pack_data, vert_lines = sliceslocations_in_middle_span, directory_path=os.path.join(directory_path, OUTPUT_DIR))
@@ -168,6 +170,14 @@ def phantom_pack(
                 json.dump(trace_data, file, indent=4)
     return all_results
 
+def img_data_in_span(img_pack_data, sliceslocations_in_middle_span):
+    sliceslocations_in_middle_span = sorted(sliceslocations_in_middle_span)
+    min_loc = np.floor(sliceslocations_in_middle_span[0])
+    max_loc = np.ceil(sliceslocations_in_middle_span[-1])
+    # img_pack_data_middlespan = [x for x in img_pack_data if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
+    img_pack_data_middlespan = [x for x in img_pack_data if (x["pdff"].SliceLocation >= min_loc) & (x["pdff"].SliceLocation <= max_loc)]
+    return img_pack_data_middlespan
+
 def calc_mean_and_median(midpoint_image:dict):
     ''' calculates mean and median, and puts a copy of the ROIs in the input dict'''
     pdff = midpoint_image["pdff"]
@@ -181,7 +191,8 @@ def calc_mean_and_median(midpoint_image:dict):
     for r in rois:
         # make a circle mask that can be applied to pdff
         mask = np.zeros(water.pixel_array.shape, dtype=np.uint8)
-        cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
+        cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
+        # cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
         # calculate mean and median
         mean_pdff = masked_mean(pdff.pixel_array, mask)
         median_pdff = masked_median(pdff.pixel_array, mask)
@@ -238,14 +249,11 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
             continue
         if masked_values == None:
             masked_values = [[] for _ in range(len(rois))]
-        roi_index = 0
-        for r in rois:
+        for roi_index, roi in enumerate(rois):
             # make a circle mask that can be applied to pdff
-            mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-            cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
-            vals = apply_mask(pdff.pixel_array, mask)
+            vals = get_values_in_roi(pdff, roi)
             masked_values[roi_index].extend(vals)
-            roi_index += 1
+
     # cast into np.array to take mean of each row, where a row contains the values for rois across slices
     np_arr = np.array(masked_values)
     # calculate mean across slices for a given roi
@@ -257,6 +265,12 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
     results_dict['maxs']     = np.max(np_arr, axis=1).tolist()
     results_dict['samples']  = [np_arr.shape[1]]*5
     return results_dict
+
+def get_values_in_roi(pdff, r) -> list:
+    mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
+    cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
+    vals = apply_mask(pdff.pixel_array, mask)
+    return vals
 
 def composite_statistics_fromlist(img_pack_data:list[dict], sliceslocs_to_analyze:list) -> dict:
     # calculate the composite stats for slices in sliceslocs_to_analyze
@@ -312,30 +326,24 @@ def find_packs_in_images(img_pack_data:list[dict],
     '''
     for mydict in img_pack_data:
         water_ds = mydict["water"]
+        water_img = water_ds.pixel_array
         px_size = water_ds.PixelSpacing[0]
-        min_radius = int(vial_radius/px_size) - int(radius_tolerance/px_size)
-        max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
-        min_vail_sep = vial_radius/px_size
-        # mask top portion of water image and find circles in what remains
-        water_circles = circles_in_water(water_ds, min_radius, max_radius, min_vail_sep)
+        min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
+        water_circles = circles_in_img(water_img, min_radius, max_radius, min_vail_sep)
         if water_circles is None:
             mydict["circles"] = None
+            if DEBUG_PLOTS:
+                plot_image(water_img, name=str(water_ds.SliceLocation), waitkey=0)
             continue
+        if DEBUG_PLOTS:
+            water_img = remove_outliers_mad(water_img, threshold=3.5)
+            plot_circles_ndarray(water_img, water_circles, name=str(water_ds.SliceLocation), waitkey=0)
         pack_circles = find_phantom_pack(
             water_circles, 
             num_circles=5,
-            row_tolerance_px=VERTICAL_ALIGNMENT_TOLERANCE_MM/px_size,
+            row_tolerance_px=vert_align_tol/px_size,
             expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
         )
-        # if pack_circles is None:
-            # try to extrapolate 3 or 4 circles into a pack
-            # pack_circles = find_phantom_pack_extrapolate(
-            #     water_circles,
-            #     pdff = mydict["pdff"],
-            #     water = mydict["water"],
-            #     min_circles = 3,
-            # )
-            
         if pack_circles is None:
             mydict["circles"] = None
             continue
@@ -343,12 +351,65 @@ def find_packs_in_images(img_pack_data:list[dict],
         mydict["circles"] = pack_circles
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
     print(f"  {len(count_circles)} slices contain phantom pack")
+    # if len(count_circles) == 0:
+    #     with open("no_packs_found.txt", "w") as f:
+    #         f.write(f"Series {water_ds.SeriesNumber}, {water_ds.SeriesDescription}")
     return img_pack_data
 
-def circles_in_water(water_ds, min_radius, max_radius, min_vail_sep):
-    water_for_hough = make_clipped_image(water_ds.pixel_array)
-    water_circles = find_circles(water_for_hough, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
-    return water_circles
+def vial_sizes_in_px(vial_radius, radius_tolerance, px_size):
+    min_radius = int(vial_radius/px_size) - int(radius_tolerance/px_size)
+    max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
+    min_vail_sep = vial_radius/px_size
+    return min_radius,max_radius,min_vail_sep
+
+def find_packs_in_images_extrapolate(img_pack_data:list[dict], 
+        vial_radius,
+        radius_tolerance = RADIUS_TOLERANCE_MM,
+        vert_align_tol = VERTICAL_ALIGNMENT_TOLERANCE_MM,
+        roi_radius = ROI_RADIUS_MM,
+        ) -> list[dict]:
+    ''' 
+        Finds circles in pdff/water image pairs and returns a dictionary of 
+        pdff_img, water_img, pack_circles
+    '''
+    print("THIS FUNCTION IS NOT READY TO USE")
+    return []
+    for fw_pair in img_pack_data:
+        ds_water = fw_pair["water"]
+        ds_pdff = fw_pair["pdff"]
+        px_size = ds_water.PixelSpacing[0]
+        min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
+        water_circles = circles_in_img(ds_water, min_radius, max_radius, min_vail_sep)
+        if water_circles is None:
+            fw_pair["circles"] = None
+            continue
+        pack_circles = find_phantom_pack_extrapolate(
+            water_circles, ds_pdff, ds_water,
+            num_circles=5,
+            row_tolerance_px=vert_align_tol/px_size,
+            expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
+        )
+        continue # debug     
+        if pack_circles is None:
+            fw_pair["circles"] = None
+            continue
+        pack_circles = sort_circles_by_x(pack_circles)
+        fw_pair["circles"] = pack_circles
+    count_circles = [img for img in img_pack_data if img["circles"] is not None]
+    print(f"  {len(count_circles)} slices contain phantom pack")
+    return img_pack_data
+
+def circles_in_img(img, min_radius, max_radius, min_vail_sep):
+    cropped_img = make_clipped_image(img)
+    # cropped_img = remove_outliers_mad(cropped_img, threshold=3.5)
+    circles = find_circles(cropped_img, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
+    return circles
+
+def circles_in_ds(water_ds, min_radius, max_radius, min_vail_sep):
+    cropped_img = make_clipped_image(water_ds.pixel_array)
+    cropped_img = remove_outliers_mad(cropped_img, threshold=3.5)
+    circles = find_circles(cropped_img, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
+    return circles
 
 def find_pack_in_pdff(img_pack_data:list[dict],
         vial_radius,
@@ -422,47 +483,49 @@ def sort_data_by_sliceloc(img_pack_data:list[dict]):
                 break
     return new_img_pack_data
 
-
-def find_midpoint_slicelocation(img_pack_data:list[dict]):
-    locations = []
-    for phc in img_pack_data:
-        if phc["circles"] is None:
-            continue
-        locations.append(phc["water"].SliceLocation)
-    if locations == []:
-        print("  No phantom packs found in images")
-        return
+def find_midpoint_slicelocation(locations:list[dict]):
     locations = sorted(list(set(locations))) # remove duplicates
     midpoint_geo = locations[0] + (locations[-1] - locations[0])/2
     midpoint_loc = find_closest_value(locations, midpoint_geo)
+    if midpoint_loc is None:
+        print(f"  Could not find midpoint")    
+        return None
     print(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
     return midpoint_loc
+
+# def find_midpoint_slicelocation(img_pack_data:list[dict]):
+#     locations = []
+#     for phc in img_pack_data:
+#         if phc["circles"] is None:
+#             continue
+#         locations.append(phc["water"].SliceLocation)
+#     if locations == []:
+#         print("  No phantom packs found in images")
+#         return
+#     locations = sorted(list(set(locations))) # remove duplicates
+#     midpoint_geo = locations[0] + (locations[-1] - locations[0])/2
+#     midpoint_loc = find_closest_value(locations, midpoint_geo)
+#     print(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
+#     return midpoint_loc
 
 def find_slices_in_span(img_pack_data:list[dict], span_mm=50, center_loc=None) -> list[float]:
     # returns a list of slice locations that are within "center" +/- span/2
     # if center is None, it will default to the midpoint of the phantom pack
     locations = []
-    if center_loc is None:
-        center_loc = find_midpoint_slicelocation(img_pack_data)
-    if center_loc is None:
-        return [], None
     for phc in img_pack_data:
         if phc["circles"] is None:
             continue
         locations.append(phc["water"].SliceLocation)
     if locations == []:
         print("  No phantom packs found in images")
+    if center_loc is None:
+        center_loc = find_midpoint_slicelocation(locations)
+    if center_loc is None:
+        return [], None
     locations = sorted(list(set(locations))) # remove duplicates
     locations_in_span = [x for x in locations if (x >= center_loc - span_mm/2 and x <= center_loc + span_mm/2)]
     print(f"  {len(locations_in_span)} images in span of +/-{span_mm/2}mm around {center_loc}")
     return locations_in_span, center_loc
-
-def create_rois_from_circles(circles, pixel_size):
-    rois = copy.deepcopy(circles)
-    roi_radius = np.uint8(ROI_RADIUS_MM/pixel_size)
-    for i in range(len(rois)):
-        rois[i][2] = roi_radius
-    return rois
 
 def create_rois(img_pack_data:list[dict], roi_radius):
     ''' Draw ROIs in center of all circles, if present'''
@@ -470,15 +533,15 @@ def create_rois(img_pack_data:list[dict], roi_radius):
     for img in images_to_analyze:
         water = img["water"]
         circles = img["circles"]
-        rois = create_rois_from_circles(circles, water.PixelSpacing[0], roi_radius)
+        rois = create_rois_from_circles(circles, roi_radius/water.PixelSpacing[0])
         img["rois"] = rois
     return 
 
-def create_rois_from_circles(circles, pixel_size, roi_radius):
+def create_rois_from_circles(circles, roi_radius_px):
     rois = copy.deepcopy(circles)
-    roi_radius = np.uint8(roi_radius/pixel_size)
+    roi_radius_px = np.uint8(roi_radius_px)
     for i in range(len(rois)):
-        rois[i][2] = roi_radius
+        rois[i][2] = roi_radius_px
     return rois
 
 def print_mean_median_values(pdff_means, pdff_medians):
@@ -607,9 +670,14 @@ def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[dict]:
         my_img_pack_data = []
         pdff_series = [x for x in pdffs if x.SeriesNumber == sn]
         for ff in pdff_series:
+            if ff.image_label.startswith('pdff_fam_bh_offline'):
+                pause=True
+            if ff.image_label.startswith('pdff_fam_fb_offline'):
+                pause=True
             wat_match_label  = [x for x in waters if x.image_label == ff.label_match]
             wat_same_acqtime = [x for x in wat_match_label if acq_time_inrange(ff.AcquisitionTime, x.AcquisitionTime)]
-            wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
+            # wat_same_loc     = [x for x in wat_same_acqtime if x.SliceLocation == ff.SliceLocation]
+            wat_same_loc     = [x for x in wat_same_acqtime if int(x.SliceLocation) == int(ff.SliceLocation)]
             if len(wat_same_loc) == 0:
                 logger.warning(f"WARNING: PDFF no water match: {ff.SeriesDescription}, SerNum {ff.SeriesNumber}, AcqTime {ff.AcquisitionTime}, Loc {ff.SliceLocation}")
             if len(wat_same_loc) > 1:
@@ -721,7 +789,8 @@ def find_phantom_pack_extrapolate(
         circles_in,
         pdff, 
         water, 
-        min_circles,
+        num_circles = 5,
+        vial_spacing_mm = VIAL_SEP_MM,
         row_tolerance_px = 99,
         expected_radius = None
         ):
@@ -729,8 +798,11 @@ def find_phantom_pack_extrapolate(
     TODO docstring
 
     """
+    print("find_phantom_pack_extrapolate() function is not finished")
+    return []
     phantoms = []
-    if (circles_in.shape[1] < min_circles):
+    min_circles = 3
+    if (circles_in.shape[1] < min_circles): # need at least 3 circles to extrapolate from
         return None
     # Sort circles by y-coordinate to facilitate grouping
     circles = np.uint16(np.around(circles_in))
@@ -769,19 +841,89 @@ def find_phantom_pack_extrapolate(
     phantoms = [g for g in phantoms if len(g) >= min_circles]
     if phantoms == []:
         return None
-    phantoms = phantoms[0] # hack: keep only first group in nested list
-
     
+    # return first groups where all vials found
+    for ph in phantoms:
+        if len(ph) == num_circles:
+            plot_circles(water.pixel_array, ph, waitkey=1)
+            return ph
+    #debug
+    for ph in phantoms:
+        plot_circles(water.pixel_array, ph, waitkey=1)
+
+    # keep only groups with regular vial spacing
+    # this will allow extrapolation to either end but prevent filling in a missing middle vial
+    px_spacing = vial_spacing_mm/water.PixelSpacing[0]
+    phantoms = [g for g in phantoms if check_vial_spacing(g, px_spacing-row_tolerance_px, px_spacing+row_tolerance_px)]
+    if phantoms == []:
+        return None
+
+    # # extrapolate if < 5 circles in phantom
+    # # drop ROIs to see which phantom is missing
+    # # estimte phattom center spacing
+    # rois = create_rois_from_circles(phantoms, ROI_RADIUS_MM/water.PixelSpacing[0])
+    rois_missing = [1, 1, 1, 1, 1]
+    # for roi in rois:
+    #     vals = get_values_in_roi(pdff, roi)
+    #     meanval = np.mean(vals)
+    #     indx = int(meanval/10)
+
+    # avg_spacing = avg_circle_spacing(phantoms)
+    # avg_roi_size = avg_circle_radius(phantoms)
+    # if (sum(rois_missing) < 3):
+    #     # figure out how to fill in missing circles
+    #     print("start here genius")
+
     return phantoms
 
-def plot_circles_2(img, circles, name='image'):
+def check_vial_spacing(ph, min_space, max_space) -> bool:
+    for i in range(len(ph)-1):
+        c0 = ph[i]
+        c1 = ph[i+1]
+        if ((abs(c0[CX]-c1[CX]) < min_space) or 
+            (abs(c0[CX]-c1[CX]) > max_space)):
+            return False
+    return True
+
+def avg_circle_spacing(phantoms):
+    avg_spacing = 0
+    for i in range(len(phantoms) - 1):
+        avg_spacing += phantoms[i][2] - phantoms[i+1][2]
+    avg_spacing = avg_spacing/(len(phantoms) - 1)
+    return avg_spacing
+
+def avg_circle_radius(phantoms):
+    avg = 0
+    for i in range(len(phantoms) - 1):
+        avg += phantoms[i][0] - phantoms[i+1][0]
+    avg = avg/(len(phantoms) - 1)
+    return avg
+
+def plot_image(img, name='image', waitkey=1):
+    cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
+    cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
+    cv2.imshow(name, cimg)
+    cv2.waitKey(waitkey)
+    cv2.destroyAllWindows()
+
+def plot_circles_list(img, circles, name='image', waitkey=1):
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     np_circles = np.uint16(np.around(circles))
-    for c in np_circles[0,:]:
-        cv2.circle(cimg,(c[0],c[1]),c[2],(0,255,0),2)   
+    for c in np_circles:
+        cv2.circle(cimg,(c[CX],c[CY]),c[CR],(0,255,0),2)   
     cv2.imshow(name, cimg)
-    cv2.waitKey(0)
+    cv2.waitKey(waitkey)
+    cv2.destroyAllWindows()
+
+def plot_circles_ndarray(img, circles, name='image', waitkey=1):
+    cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
+    cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
+    np_circles = np.uint16(np.around(circles))
+    for c in np_circles[0,:]: # don't remembwer what packing needed this slice
+        cv2.circle(cimg,(c[CX],c[CY]),c[CR],(0,255,0),2)   
+    cv2.imshow(name, cimg)
+    cv2.waitKey(waitkey)
     cv2.destroyAllWindows()
 
 def plot_selected_image(img_data:dict, dest_filepath:str=None, display_image=False):
@@ -991,6 +1133,18 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     plt.savefig(img_filepath)
     plt.close()
     
+
+def remove_outliers_mad(image, threshold=3.5):
+    median = np.median(image)
+    mad = np.median(np.abs(image - median))
+    # MAD to standard deviation approximation (if needed): σ ≈ 1.4826 * MAD
+    modified_z_scores = 0.6745 * (image - median) / (mad + 1e-6)
+    mask = np.abs(modified_z_scores) < threshold
+    # num_outliers = np.sum(mask==False)
+    # if num_outliers > 0:
+    #     logging.info(f"Removed {num_outliers} outliers from image")
+    return np.where(mask, image, 0)  # replace outliers with 0 
+
 
 if __name__ == "__main__":
     directory_path = sys.argv[1]

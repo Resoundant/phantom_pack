@@ -10,13 +10,15 @@ identifying_labels = [
         "image_label": "pdff_fam_bh_offline",
         "search_in": "SeriesDescription",
         "search_for": "FatFrac: BH new FAM Offline",
-        "label_match": "water_fam_bh_offline"
+        "label_match": "water_fam_bh"
+        # "label_match": "water_fam_bh_offline"
     },
     {
         "image_label": "pdff_fam_bh_offline_nocorrection",
         "search_in": "SeriesDescription",
         "search_for": "FatFrac W/O correction: BH new FAM Offline",
-        "label_match": "water_fam_bh_offline"
+        "label_match": "water_fam_bh"
+        # "label_match": "water_fam_bh_offline"
     },
     {
         "image_label": "water_fam_bh_offline",
@@ -40,13 +42,15 @@ identifying_labels = [
         "image_label": "pdff_fam_fb_offline",
         "search_in": "SeriesDescription",
         "search_for": "FatFrac: FB new FAM Offline",
-        "label_match": "water_fam_fb_offline"
+        "label_match": "water_fam_fb"
+        # "label_match": "water_fam_fb_offline"
     },
     {
         "image_label": "pdff_fam_fb_offline_nocorrection",
         "search_in": "SeriesDescription",
         "search_for": "FatFrac W/O correction: FB new FAM Offline",
-        "label_match": "water_fam_fb_offline"
+        "label_match": "water_fam_fb"
+        # "label_match": "water_fam_fb_offline"
     },
     {
         "image_label": "water_fam_fb_offline",
