@@ -9,6 +9,7 @@ import json
 import matplotlib.pyplot as plt
 import time
 from image_labels import identifying_labels, load_labels
+from statistics import mode
 import logging
 
 logger = logging.getLogger(__name__)
@@ -236,9 +237,21 @@ def slice_stats(img:dict) -> dict:
     return stats
 
 def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
-    # calculate the composite stats for slices in sliceslocs_to_analyze
-    masked_values = None
-    # extract the pdff mean and median list
+    '''
+    Calculate the composite stats for slices in range (min_loc, max_loc)
+    Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]'''
+
+    # quickly check that same number of ROIs in all images
+    num_rois_in_images = []
+    for img in img_pack_data:
+        if "rois" not in img:
+            continue
+        num_rois_in_images.append(len(img["rois"]))
+    if len(set(num_rois_in_images)) > 1:
+        print("WARNING: not all images have same number of ROIs: mode is ")
+    # create lists of all value in rois across all slices in range
+    num_rois_mode = mode(num_rois_in_images)
+    masked_values = [[] for _ in range(num_rois_mode)]
     for img in img_pack_data:
         if "rois" not in img:
             continue
@@ -246,8 +259,6 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
         rois = img["rois"]
         if (pdff.SliceLocation > max_loc) or (pdff.SliceLocation < min_loc): 
             continue
-        if masked_values == None:
-            masked_values = [[] for _ in range(len(rois))]
         for roi_index, roi in enumerate(rois):
             # make a circle mask that can be applied to pdff
             vals = get_values_in_roi(pdff, roi)
@@ -280,7 +291,7 @@ def renormalize_stats(results_dict:dict) -> dict:
 
 def get_values_in_roi(pdff, r) -> list:
     mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-    cv2.circle(mask, (r[0], r[1]), r[2], (1), -1) # solid circle (thickness = -1) filled with  1
+    cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
     vals = apply_mask(pdff.pixel_array, mask)
     return vals
 
@@ -330,7 +341,7 @@ def find_packs_in_images(img_pack_data:list[dict],
         vial_radius,
         radius_tolerance = RADIUS_TOLERANCE_MM,
         vert_align_tol = VERTICAL_ALIGNMENT_TOLERANCE_MM,
-        roi_radius = ROI_RADIUS_MM,
+        vial_separation = VIAL_SEP_MM,
         ) -> list[dict]:
     ''' 
         Finds circles in pdff/water image pairs and returns a dictionary of 
@@ -354,7 +365,8 @@ def find_packs_in_images(img_pack_data:list[dict],
             water_circles, 
             num_circles=5,
             row_tolerance_px=vert_align_tol/px_size,
-            expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
+            expected_radius=(vial_radius/px_size, np.ceil(2/px_size)),
+            expected_sep_px=(vial_separation/px_size, np.ceil(4/px_size))
         )
         if pack_circles is None:
             mydict["circles"] = None
@@ -373,43 +385,6 @@ def vial_sizes_in_px(vial_radius, radius_tolerance, px_size):
     max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
     min_vail_sep = vial_radius/px_size
     return min_radius,max_radius,min_vail_sep
-
-def find_packs_in_images_extrapolate(img_pack_data:list[dict], 
-        vial_radius,
-        radius_tolerance = RADIUS_TOLERANCE_MM,
-        vert_align_tol = VERTICAL_ALIGNMENT_TOLERANCE_MM,
-        roi_radius = ROI_RADIUS_MM,
-        ) -> list[dict]:
-    ''' 
-        Finds circles in pdff/water image pairs and returns a dictionary of 
-        pdff_img, water_img, pack_circles
-    '''
-    print("THIS FUNCTION IS NOT READY TO USE")
-    return []
-    for fw_pair in img_pack_data:
-        ds_water = fw_pair["water"]
-        ds_pdff = fw_pair["pdff"]
-        px_size = ds_water.PixelSpacing[0]
-        min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
-        water_circles = circles_in_img(ds_water, min_radius, max_radius, min_vail_sep)
-        if water_circles is None:
-            fw_pair["circles"] = None
-            continue
-        pack_circles = find_phantom_pack_extrapolate(
-            water_circles, ds_pdff, ds_water,
-            num_circles=5,
-            row_tolerance_px=vert_align_tol/px_size,
-            expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
-        )
-        continue # debug     
-        if pack_circles is None:
-            fw_pair["circles"] = None
-            continue
-        pack_circles = sort_circles_by_x(pack_circles)
-        fw_pair["circles"] = pack_circles
-    count_circles = [img for img in img_pack_data if img["circles"] is not None]
-    print(f"  {len(count_circles)} slices contain phantom pack")
-    return img_pack_data
 
 def circles_in_img(img, min_radius, max_radius, min_vail_sep):
     cropped_img = make_clipped_image(img)
@@ -733,7 +708,7 @@ def find_phantom_pack(
         circles_in, 
         num_circles:int=5, row_tolerance_px=5, 
         expected_radius:tuple[float,float]=None, 
-        expected_sep:tuple[float,float]=None
+        expected_sep_px:tuple[float,float]=None
         ):
     """
     Finds the  group of 5 circles that lie roughly in a horizontal line.
@@ -744,7 +719,7 @@ def find_phantom_pack(
         row_tolerance: The maximum difference in y-coordinates to consider as vertically aligned (in a row).
         expected_radius (tuple[float,float]): A tuple where the first element is the expected radius and the second element is the tolerance.
             discard circles that are not in expected_radius +/- tolerance
-        expected_sep (tuple[float,float]): NOT USED - the (expected separation, tolerance) between centers of phantom 
+        expected_sep_px (tuple[float,float]): the (expected separation, tolerance) between centers of phantom 
     
     Returns:
         list: The group of circles in the horizontal line.
@@ -789,102 +764,27 @@ def find_phantom_pack(
     phantoms = [g for g in phantoms if len(g) >= num_circles]
     if phantoms == []:
         return None
-    phantoms = phantoms[0] # hack: keep only first group in nested list
-
-    # # only keep circles in expected_sep +/- px_tolerance
-    # if expected_sep != None:
-    #     return phantoms
+    if len(phantoms) > 1:
+        print(f"HACK - {len(phantoms)} found, keeping only first phantom in list")
+        phantoms = phantoms[0] # hack: keep only first group in nested list
+    if len(phantoms) == 1:
+        print("Note - keeping only first phantom in list")
+        phantoms = phantoms[0] # hack: keep only first group in nested list
     
-    return phantoms
 
-def find_phantom_pack_extrapolate(
-        circles_in,
-        pdff, 
-        water, 
-        num_circles = 5,
-        vial_spacing_mm = VIAL_SEP_MM,
-        row_tolerance_px = 99,
-        expected_radius = None
-        ):
-    """
-    TODO docstring
-
-    """
-    print("find_phantom_pack_extrapolate() function is not finished")
-    return []
-    phantoms = []
-    min_circles = 3
-    if (circles_in.shape[1] < min_circles): # need at least 3 circles to extrapolate from
-        return None
-    # Sort circles by y-coordinate to facilitate grouping
-    circles = np.uint16(np.around(circles_in))
-    circles = circles[0,:]
-    circles = sorted(circles, key=lambda c: c[1])
-    
-    # Find all groups of circles that have similar y-coordinates
-    # bug: this will duplicate rows, leaving off first entry in each subsequent row
-    horizontal_groups = []
-    for i in range(len(circles)):
-        group = [circles[i]]
-        for j in range(i + 1, len(circles)):
-            if abs(int(circles[j][1]) - int(circles[i][1])) <= row_tolerance_px:
-                group.append(circles[j])
-        horizontal_groups.append(group)
-
-    # only keep horizontal groups with at least 5 circles
-    phantoms = [g for g in horizontal_groups if len(g) >= min_circles]
-    if phantoms == []:
-        return None
-
-    # only keep circles in expected_radius +/- px_tolerance
-    if expected_radius != None:
-        similar_radius = []
-        for row in phantoms:
-            # phantoms = [g for g in row if (abs(float(c[2]) - expected_radius[0]) <= expected_radius[1] for c in g)]
-            g = []
-            for c in row:
-                radius = abs(float(c[2]) - expected_radius[0]) 
-                if radius <= expected_radius[1]:
-                    g.append(c)
-            similar_radius.append(g)
-        phantoms = similar_radius
-
-    # keep only simarly-radius groups that meet minimum num circles
-    phantoms = [g for g in phantoms if len(g) >= min_circles]
-    if phantoms == []:
-        return None
-    
-    # return first groups where all vials found
-    for ph in phantoms:
-        if len(ph) == num_circles:
-            plot_circles(water.pixel_array, ph, waitkey=1)
-            return ph
-    #debug
-    for ph in phantoms:
-        plot_circles(water.pixel_array, ph, waitkey=1)
-
-    # keep only groups with regular vial spacing
-    # this will allow extrapolation to either end but prevent filling in a missing middle vial
-    px_spacing = vial_spacing_mm/water.PixelSpacing[0]
-    phantoms = [g for g in phantoms if check_vial_spacing(g, px_spacing-row_tolerance_px, px_spacing+row_tolerance_px)]
-    if phantoms == []:
-        return None
-
-    # # extrapolate if < 5 circles in phantom
-    # # drop ROIs to see which phantom is missing
-    # # estimte phattom center spacing
-    # rois = create_rois_from_circles(phantoms, ROI_RADIUS_MM/water.PixelSpacing[0])
-    rois_missing = [1, 1, 1, 1, 1]
-    # for roi in rois:
-    #     vals = get_values_in_roi(pdff, roi)
-    #     meanval = np.mean(vals)
-    #     indx = int(meanval/10)
-
-    # avg_spacing = avg_circle_spacing(phantoms)
-    # avg_roi_size = avg_circle_radius(phantoms)
-    # if (sum(rois_missing) < 3):
-    #     # figure out how to fill in missing circles
-    #     print("start here genius")
+    # only keep circles in expected_sep +/- px_tolerance
+    if expected_sep_px != None:
+        remove_indeces = []
+        phantoms = sort_circles_by_x(phantoms)
+        for j in range(len(phantoms)-1):
+            phantom_sep = float(phantoms[j+1][0]) - float(phantoms[j][0])
+            if (abs(phantom_sep - expected_sep_px[0]) > expected_sep_px[1]):
+                print(f"found cirlce outlier")
+                remove_indeces.append(j)
+                # plot_image(water_img, name=str(water_ds.SliceLocation), waitkey=0)
+        sorted(remove_indeces, reverse=True)
+        for i in remove_indeces:
+            phantoms.pop(i)
 
     return phantoms
 

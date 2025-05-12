@@ -67,6 +67,9 @@ if __name__ == '__main__':
             'StationName': [data['StationName']],
         })
         df_list.append(df_row)
+    if df_list == []:
+        print("No data found to summarize")
+        exit(1)
     df = pd.concat(df_list, ignore_index=True)
     df.to_excel(output_file)
 
