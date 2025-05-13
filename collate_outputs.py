@@ -1,10 +1,11 @@
+#!python
 import os
 import sys
 import json
 import glob
 import pandas as pd
 
-sys.argv= ['this', r'C:\testdata\PhantomPack']
+# sys.argv= ['this', r'C:\testdata\PhantomPack']
 if __name__ == '__main__':
     # collect all .json files in top_dir, recursively
     top_dir = sys.argv[1]
@@ -14,9 +15,12 @@ if __name__ == '__main__':
     for file in files:
         if "_trace" in file:
             continue # skip traceability logs
-        with open(file, 'r') as f:
-            json_data_list.append(json.load(f))
-    
+        try:
+            with open(file, 'r') as f:
+                json_data_list.append(json.load(f))
+        except:
+            continue
+
     # output in excel format
     output_file = os.path.join(top_dir, 'output.xlsx')
     df_list = []

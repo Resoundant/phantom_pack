@@ -71,11 +71,11 @@ def phantom_pack(
     os.makedirs(output_dir, exist_ok=True)
 
     # load dicoms in directory
-    print("Loading files...")
+    logger.info("Loading files...")
     time_load_start = time.perf_counter()
     all_dicoms = load_dicoms(directory_path, turbo_mode=True)
     time_load_end = time.perf_counter()
-    print(f"loaded {len(all_dicoms)} dicoms in {time_load_end - time_load_start:.2f} seconds")
+    logger.info(f"loaded {len(all_dicoms)} dicoms in {time_load_end - time_load_start:.2f} seconds")
     
     # label each dicom according to identifying_labels
     for ds in all_dicoms:
@@ -83,11 +83,11 @@ def phantom_pack(
     # find pdff/water pairs; img_packs = [[pair1],[pair2],...]
     img_packs = find_fw_pairs(all_dicoms)
     if len(img_packs) == 0:
-        print(f"No PDFF/Water data found in {directory_path}")
+        logger.warning(f"No PDFF/Water data found in {directory_path}")
         return {}
-    print(f'========================================')
-    print(f'Found {len(img_packs)} pdff/water series')
-    print('')
+    logger.info(f'========================================')
+    logger.info(f'Found {len(img_packs)} pdff/water series')
+    logger.info('')
 
     # save summary of loaded data: each pdff/water series and description
     with open(os.path.join(output_dir, f"found_data_summary.txt"), 'w') as f:
@@ -114,9 +114,9 @@ def phantom_pack(
     for img_pack_data in img_packs:
         if len(img_pack_data) == 0: # no data
             continue
-        print("")
-        print(f"Processing PDFF series {img_pack_data[0]['pdff'].SeriesNumber} {img_pack_data[0]['pdff'].SeriesDescription}")
-        print(f"     with WATER series {img_pack_data[0]['water'].SeriesNumber} {img_pack_data[0]['water'].SeriesDescription}")
+        logger.info("")
+        logger.info(f"Processing PDFF series {img_pack_data[0]['pdff'].SeriesNumber} {img_pack_data[0]['pdff'].SeriesDescription}")
+        logger.info(f"     with WATER series {img_pack_data[0]['water'].SeriesNumber} {img_pack_data[0]['water'].SeriesDescription}")
         # find circles in images
         # restore this
         img_pack_data = find_packs_in_images(
@@ -139,7 +139,6 @@ def phantom_pack(
 
         # collect info about dataset
         image_info = get_image_info(img_pack_data)
-        # print(json.dumps(image_info, indent=2))
         # save image of all pdff water pairs
         array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
         plot_results(img_pack_data, dest_filepath=array_filepath, display_image=False)
@@ -156,7 +155,7 @@ def phantom_pack(
             file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
             with open(file_path, 'w') as file:
                 json.dump(results, file, indent=4)
-            print(f"  JSON data saved to {file_path}")
+            logger.info(f"  JSON data saved to {file_path}")
         if MATCH_TRACE:
             trace_data = []
             for imgs in img_pack_data:
@@ -248,7 +247,7 @@ def composite_statistics(img_pack_data:list[dict], min_loc, max_loc) -> dict:
             continue
         num_rois_in_images.append(len(img["rois"]))
     if len(set(num_rois_in_images)) > 1:
-        print("WARNING: not all images have same number of ROIs: mode is ")
+        logger.warning("WARNING: not all images have same number of ROIs ")
     # create lists of all value in rois across all slices in range
     num_rois_mode = mode(num_rois_in_images)
     masked_values = [[] for _ in range(num_rois_mode)]
@@ -374,7 +373,7 @@ def find_packs_in_images(img_pack_data:list[dict],
         pack_circles = sort_circles_by_x(pack_circles)
         mydict["circles"] = pack_circles
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
-    print(f"  {len(count_circles)} slices contain phantom pack")
+    logger.info(f"  {len(count_circles)} slices contain phantom pack")
     # if len(count_circles) == 0:
     #     with open("no_packs_found.txt", "w") as f:
     #         f.write(f"Series {water_ds.SeriesNumber}, {water_ds.SeriesDescription}")
@@ -419,20 +418,13 @@ def find_pack_in_pdff(img_pack_data:list[dict],
         if my_circles is None:
             mydict["circles"] = None
             continue
-        # pack_circles = find_phantom_pack(
-        #     my_circles, 
-        #     num_circles=5,
-        #     row_tolerance_px=VERTICAL_ALIGNMENT_TOLERANCE_MM/px_size,
-        #     expected_radius=(vial_radius/px_size, np.ceil(2/px_size))
-        #     )
         if pack_circles is None:
             mydict["circles"] = None
             continue
         pack_circles = sort_circles_by_x(pack_circles)
-        # print(pack_circles) #debug, to be sure circles are sorted left to right
         mydict["circles"] = pack_circles
     count_circles = [img for img in img_pack_data if img["circles"] is not None]
-    print(f"  found {len(count_circles)} slices where phantom pack is present")
+    logger.info(f"  found {len(count_circles)} slices where phantom pack is present")
     return img_pack_data
 
 def circles_in_pdff(ds, min_radius, max_radius, min_sep):
@@ -475,25 +467,10 @@ def find_midpoint_slicelocation(locations:list[dict]):
     midpoint_geo = locations[0] + (locations[-1] - locations[0])/2
     midpoint_loc = find_closest_value(locations, midpoint_geo)
     if midpoint_loc is None:
-        print(f"  Could not find midpoint")    
+        logger.info(f"  Could not find midpoint")    
         return None
-    print(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
+    logger.info(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
     return midpoint_loc
-
-# def find_midpoint_slicelocation(img_pack_data:list[dict]):
-#     locations = []
-#     for phc in img_pack_data:
-#         if phc["circles"] is None:
-#             continue
-#         locations.append(phc["water"].SliceLocation)
-#     if locations == []:
-#         print("  No phantom packs found in images")
-#         return
-#     locations = sorted(list(set(locations))) # remove duplicates
-#     midpoint_geo = locations[0] + (locations[-1] - locations[0])/2
-#     midpoint_loc = find_closest_value(locations, midpoint_geo)
-#     print(f"  Of {len(locations)} unique slice locations, min {locations[0]}, max {locations[-1]}, midpoint (closest) {midpoint_loc}")
-#     return midpoint_loc
 
 def find_slices_in_span(img_pack_data:list[dict], span_mm=50, center_loc=None) -> list[float]:
     # returns a list of slice locations that are within "center" +/- span/2
@@ -504,14 +481,14 @@ def find_slices_in_span(img_pack_data:list[dict], span_mm=50, center_loc=None) -
             continue
         locations.append(phc["water"].SliceLocation)
     if locations == []:
-        print("  No phantom packs found in images")
+        logger.warning("  No phantom packs found in images")
     if center_loc is None:
         center_loc = find_midpoint_slicelocation(locations)
     if center_loc is None:
         return [], None
     locations = sorted(list(set(locations))) # remove duplicates
     locations_in_span = [x for x in locations if (x >= center_loc - span_mm/2 and x <= center_loc + span_mm/2)]
-    print(f"  {len(locations_in_span)} images in span of +/-{span_mm/2}mm around {center_loc}")
+    logger.info(f"  {len(locations_in_span)} images in span of +/-{span_mm/2}mm around {center_loc}")
     return locations_in_span, center_loc
 
 def create_rois(img_pack_data:list[dict], roi_radius):
@@ -545,9 +522,9 @@ def print_mean_median_values(pdff_means, pdff_medians):
 
 def load_dicoms(directory_path:str, turbo_mode=False):
     if turbo_mode:
-        print("...Fast loading mode enabled")
+        logger.info("...Fast loading mode enabled")
         return load_dicoms_fromdir_quickly(directory_path)
-    print("...Standard loading mode enabled")
+    logger.info("...Standard loading mode enabled")
     return load_dicoms_fromdir(directory_path)
 
 def load_dicoms_fromdir(directory_path:str) -> list[pydicom.Dataset]:
@@ -629,13 +606,6 @@ def has_relevant_data(ds:pydicom.Dataset) -> bool:
         if any(element in series_desc.lower() for element in load_labels['series_description']):
             return True
     return False    
-
-def check_for_duplicates(all_dicoms):
-    seen = set()
-    for ds in all_dicoms:
-        if ds.filename in seen:
-            print(f"Duplicate file found: {ds.filename}")
-        seen.add(ds.filename)
 
 def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.Dataset]:
     images = []
@@ -765,10 +735,10 @@ def find_phantom_pack(
     if phantoms == []:
         return None
     if len(phantoms) > 1:
-        print(f"HACK - {len(phantoms)} found, keeping only first phantom in list")
+        logger.warning(f"HACK - {len(phantoms)} found, keeping only first phantom in list")
         phantoms = phantoms[0] # hack: keep only first group in nested list
     if len(phantoms) == 1:
-        print("Note - keeping only first phantom in list")
+        # logger.info("Note - keeping only first phantom in list")
         phantoms = phantoms[0] # hack: keep only first group in nested list
     
 
@@ -779,9 +749,8 @@ def find_phantom_pack(
         for j in range(len(phantoms)-1):
             phantom_sep = float(phantoms[j+1][0]) - float(phantoms[j][0])
             if (abs(phantom_sep - expected_sep_px[0]) > expected_sep_px[1]):
-                print(f"found cirlce outlier")
+                # logger.info(f"found cirlce outlier")
                 remove_indeces.append(j)
-                # plot_image(water_img, name=str(water_ds.SliceLocation), waitkey=0)
         sorted(remove_indeces, reverse=True)
         for i in remove_indeces:
             phantoms.pop(i)
@@ -1062,7 +1031,7 @@ if __name__ == "__main__":
     directory_path = sys.argv[1]
     logfile = os.path.join(directory_path, "phantom_pack.log")
     logging.basicConfig(filename=logfile, level=logging.INFO)
-    print(f"Processing {directory_path}")
+    logger.info(f"Processing {directory_path}")
     results = phantom_pack(directory_path)
     
 
