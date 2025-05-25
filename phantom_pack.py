@@ -233,32 +233,11 @@ def img_pairs_in_span(fw_series:FWSeries, min_loc:float, max_loc:float):
     images_in_span = sorted(images_in_span, key=lambda x: x.location_full)
     return images_in_span
 
-# def calc_mean_and_median(midpoint_image:dict):
-#     ''' calculates mean and median, and puts a copy of the ROIs in the input dict'''
-#     pdff = midpoint_image["pdff"]
-#     water = midpoint_image["water"]
-#     circles = midpoint_image["circles"]
-#     rois = create_rois_from_circles(circles, water.PixelSpacing[0])
-#     midpoint_image["rois"] = rois
-#     #apply rois to PDFF
-#     pdff_means = []
-#     pdff_medians = []
-#     for r in rois:
-#         # make a circle mask that can be applied to pdff
-#         mask = np.zeros(water.pixel_array.shape, dtype=np.uint8)
-#         cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
-#         # calculate mean and median
-#         mean_pdff = masked_mean(pdff.pixel_array, mask)
-#         median_pdff = masked_median(pdff.pixel_array, mask)
-#         pdff_means.append(mean_pdff)
-#         pdff_medians.append(median_pdff)
-#     return pdff_means,pdff_medians
 
 
 def slice_stats(img:ImagePair) -> dict:
     # Compute the mean, median, and standard dev of a pdff/water pair.
-    # img should be a single slice of the img_pack_data,
-    # with pdff, water and rois
+    # img should be a single slice of the img_pack_data, with pdff, water and rois
     # Output: pdff_means:[], pdff_stddevs:[], pdff_medians:[] - lists of mean, stddev, median
     # for the circles
     stats = {}
@@ -343,8 +322,7 @@ def renormalize_stats(results_dict:dict) -> dict:
 
 def get_values_in_roi(pdff, r) -> list:
     mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-    cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
-    # cv2.circle(mask, (r[CX], r[CY]), r[CR], (1,1,1), -1)
+    cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
     vals = apply_mask(pdff.pixel_array, mask)
     return vals
 
@@ -499,19 +477,6 @@ def sort_circles_by_x_coord(circles:np.ndarray):
 def sort_data_by_sliceloc(fw_series:FWSeries):
     ''' Re-orders the fw_sereies.image_paris list by slice location, ascending) '''
     fw_series.image_pairs = sorted(fw_series.image_pairs, key=lambda x: x.location)
-    # remove this once confirmed sort works
-    # slicelocs = []
-    # for mydict in fw_series.image_pairs:
-    #     slicelocs.append(mydict["water"].SliceLocation)
-    # slicelocs = sorted(slicelocs)
-    # # create new list of images/circle tuples orded by location
-    # new_img_pack_data = []
-    # for loc in slicelocs:
-    #     for mydict in img_pack_data:
-    #         if mydict["water"].SliceLocation == loc:
-    #             new_img_pack_data.append(mydict)
-    #             break
-    # return new_img_pack_data
 
 def find_midpoint(locations: list) -> float | None:
     """Finds the midpoint of a list of values."""
