@@ -69,8 +69,8 @@ class ImagePair:
     def __init__(self, pdff:pydicom.Dataset, water:pydicom.Dataset):
         self.pdff = pdff
         self.water = water
-        self.circles:list|None = None
-        self.rois:list|None = None
+        self.circles = []
+        self.rois = []
         self.location:int = -999
         self.location_full:float = -999.0
         self.pixel_spacing = water.PixelSpacing[0]
@@ -82,10 +82,10 @@ class ImagePair:
             logger.warning(f"Pixel spacing mismatch! {self.pdff.SeriesDescription}")
 
     def has_circles(self):
-        return self.circles is not None
+        return self.circles !=[]
     
     def has_rois(self):
-        return self.rois is not None
+        return self.rois != []
 
 def phantom_pack(
         directory_path:str, 
@@ -127,7 +127,6 @@ def phantom_pack(
     # save summary of data loaded but unknown (no matching label)
     log_unknowns_to_file(output_dir, all_dicoms)
 
-    all_results = []
     for fw_serie in fw_series_paired:
         if len(fw_serie.image_pairs) == 0: # no data
             continue
@@ -142,47 +141,53 @@ def phantom_pack(
             radius_tolerance=radius_tolerance,
             vert_align_tol=vert_align_tol
         )
+
         sort_data_by_sliceloc(fw_serie)
         create_rois(fw_serie, roi_radius=roi_radius) # put ROIs from all found circles
-        fw_serie.pack_midpoint = find_pack_midpoint(fw_serie)
-    
+
         # COMPUTE STATISTICS
-        composite_results = composite_statistics(fw_serie, fw_serie.pack_midpoint-span_mm/2, fw_serie.pack_midpoint+span_mm/2)
-
-        # collect info about dataset
-        image_info = get_image_info(fw_serie)
-        # save image of all pdff water pairs
-        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
-        plot_results(fw_serie, dest_filepath=array_filepath, display_image=False)
-        # save image of just the selected slices
-        array_filepath = os.path.join(directory_path, OUTPUT_DIR, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-        
-        
-        # img_pack_data_middlespan = img_data_in_span(img_pack_data, sliceslocations_in_middle_span)
-        # plot_results(img_pack_data_middlespan, dest_filepath=array_filepath, display_image=False)
-        # # save plots of slice values
-        # plot_slice_values(img_pack_data, vert_lines = sliceslocations_in_middle_span, directory_path=os.path.join(directory_path, OUTPUT_DIR))
-
-        results = composite_results | image_info
-        if results:
-            all_results.append(results)
-            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
-            with open(file_path, 'w') as file:
-                json.dump(results, file, indent=4)
-            logger.info(f"  JSON data saved to {file_path}")
-        if MATCH_TRACE:
-            trace_data = []
-            for imgs in fw_serie.image_pairs:
-                trace_data.append({
-                    "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
-                    "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
-                    "pdff_filename" : f"Series {imgs.pdff.filename}",
-                    "water_filename" : f"Series {imgs.water.filename}",
-                })
-            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
-            with open(file_path, 'w') as file:
-                json.dump(trace_data, file, indent=4)
+        fw_serie.pack_midpoint = find_pack_midpoint(fw_serie)
+        if fw_serie.pack_midpoint is None:
+            logger.warning(f"No pack midpoint found for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+            continue
+        results = compute_and_save_results(span_mm, output_dir, fw_serie)
     return 
+
+def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
+    min_loc = fw_serie.pack_midpoint-span_mm/2
+    max_loc = fw_serie.pack_midpoint+span_mm/2
+    composite_results = composite_statistics(fw_serie, min_loc, max_loc)
+        # collect info about dataset
+    image_info = get_image_info(fw_serie)
+        # save canvas of all pdff water pairs with circles
+    array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+    plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
+        # save image of just the selected slices
+    array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+    image_pairs_in_span = img_pairs_in_span(fw_serie, min_loc, max_loc)
+    plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+        # save plots of slice values
+    plot_slice_values(fw_serie, vert_lines=[min_loc, max_loc], directory_path=output_dir)
+    results = composite_results | image_info
+
+    if results:
+        file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
+        with open(file_path, 'w') as file:
+            json.dump(results, file, indent=4)
+        logger.info(f"  JSON data saved to {file_path}")
+    if MATCH_TRACE:
+        trace_data = []
+        for imgs in fw_serie.image_pairs:
+            trace_data.append({
+                "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
+                "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
+                "pdff_filename" : f"Series {imgs.pdff.filename}",
+                "water_filename" : f"Series {imgs.water.filename}",
+            })
+        file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
+        with open(file_path, 'w') as file:
+            json.dump(trace_data, file, indent=4)
+    return results
 
 def log_unknowns_to_file(output_dir, all_dicoms):
     unknowns = [x for x in all_dicoms if x.image_label == "unknown"]
@@ -223,34 +228,31 @@ def label_dataset(ds:pydicom.Dataset):
     return
 
 
-def img_data_in_span(img_pack_data, sliceslocations_in_middle_span):
-    sliceslocations_in_middle_span = sorted(sliceslocations_in_middle_span)
-    min_loc = np.floor(sliceslocations_in_middle_span[0])
-    max_loc = np.ceil(sliceslocations_in_middle_span[-1])
-    # img_pack_data_middlespan = [x for x in img_pack_data if x["pdff"].SliceLocation in sliceslocations_in_middle_span]
-    img_pack_data_middlespan = [x for x in img_pack_data if (x["pdff"].SliceLocation >= min_loc) & (x["pdff"].SliceLocation <= max_loc)]
-    return img_pack_data_middlespan
+def img_pairs_in_span(fw_series:FWSeries, min_loc:float, max_loc:float):
+    images_in_span = [x for x in fw_series.image_pairs if min_loc <= x.location_full <= max_loc]
+    images_in_span = sorted(images_in_span, key=lambda x: x.location_full)
+    return images_in_span
 
-def calc_mean_and_median(midpoint_image:dict):
-    ''' calculates mean and median, and puts a copy of the ROIs in the input dict'''
-    pdff = midpoint_image["pdff"]
-    water = midpoint_image["water"]
-    circles = midpoint_image["circles"]
-    rois = create_rois(circles, water.PixelSpacing[0])
-    midpoint_image["rois"] = rois
-    #apply rois to PDFF
-    pdff_means = []
-    pdff_medians = []
-    for r in rois:
-        # make a circle mask that can be applied to pdff
-        mask = np.zeros(water.pixel_array.shape, dtype=np.uint8)
-        cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
-        # calculate mean and median
-        mean_pdff = masked_mean(pdff.pixel_array, mask)
-        median_pdff = masked_median(pdff.pixel_array, mask)
-        pdff_means.append(mean_pdff)
-        pdff_medians.append(median_pdff)
-    return pdff_means,pdff_medians
+# def calc_mean_and_median(midpoint_image:dict):
+#     ''' calculates mean and median, and puts a copy of the ROIs in the input dict'''
+#     pdff = midpoint_image["pdff"]
+#     water = midpoint_image["water"]
+#     circles = midpoint_image["circles"]
+#     rois = create_rois_from_circles(circles, water.PixelSpacing[0])
+#     midpoint_image["rois"] = rois
+#     #apply rois to PDFF
+#     pdff_means = []
+#     pdff_medians = []
+#     for r in rois:
+#         # make a circle mask that can be applied to pdff
+#         mask = np.zeros(water.pixel_array.shape, dtype=np.uint8)
+#         cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
+#         # calculate mean and median
+#         mean_pdff = masked_mean(pdff.pixel_array, mask)
+#         median_pdff = masked_median(pdff.pixel_array, mask)
+#         pdff_means.append(mean_pdff)
+#         pdff_medians.append(median_pdff)
+#     return pdff_means,pdff_medians
 
 
 def slice_stats(img:ImagePair) -> dict:
@@ -267,19 +269,17 @@ def slice_stats(img:ImagePair) -> dict:
         stats["pdff_stddevs"] = [0]*5
         return stats
     # apply rois to PDFF
-    pdff = img.pdff
-    rois = img.rois
     pdff_means = []
     pdff_medians = []
     pdff_stddevs = []
-    for r in rois:
+    for r in img.rois:
         # make a circle mask that can be applied to pdff
-        mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-        cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
+        mask = np.zeros(img.pdff.pixel_array.shape, dtype=np.uint8)
+        cv2.circle(mask, (r[CX], r[CY]), r[CR], color=1, thickness=-1) # solid circle (thickness = -1) filled with  1
         # calculate mean and median
-        mean_pdff   = masked_mean(  pdff.pixel_array, mask)
-        median_pdff = masked_median(pdff.pixel_array, mask)
-        stddev_pdff = masked_stddev(pdff.pixel_array, mask)
+        mean_pdff   = masked_mean(  img.pdff.pixel_array, mask)
+        median_pdff = masked_median(img.pdff.pixel_array, mask)
+        stddev_pdff = masked_stddev(img.pdff.pixel_array, mask)
         pdff_means.append(mean_pdff)
         pdff_medians.append(median_pdff)
         pdff_stddevs.append(stddev_pdff)
@@ -296,9 +296,8 @@ def composite_statistics(fw_series:FWSeries, min_loc, max_loc) -> dict:
     # quickly check that same number of ROIs in all images
     num_rois_in_images = []
     for img_pair in fw_series.image_pairs:
-        if not img_pair.has_rois():
-            continue
-        num_rois_in_images.append(len(img_pair.rois))
+        if img_pair.has_rois():
+            num_rois_in_images.append(len(img_pair.rois))
     if len(set(num_rois_in_images)) > 1:
         logger.warning("WARNING: not all images have same number of ROIs ")
 
@@ -306,7 +305,7 @@ def composite_statistics(fw_series:FWSeries, min_loc, max_loc) -> dict:
     num_rois_mode = mode(num_rois_in_images)
     masked_values = [[] for _ in range(num_rois_mode)]
     for img_pair in fw_series.image_pairs:
-        if img_pair.has_rois() is False:
+        if not img_pair.has_rois():
             continue
         pdff = img_pair.pdff
         rois = img_pair.rois
@@ -366,7 +365,7 @@ def composite_statistics_fromlist(img_pack_data:list[dict], sliceslocs_to_analyz
         for r in rois:
             # make a circle mask that can be applied to pdff
             mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-            cv2.circle(mask, (r[CX], r[CY]), r[CR], (1), -1) # solid circle (thickness = -1) filled with  1
+            cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
             vals = apply_mask(pdff.pixel_array, mask)
             masked_values[roi_index].extend(vals)
             roi_index += 1
@@ -407,8 +406,9 @@ def find_packs_in_images(
         px_size = water_ds.PixelSpacing[0]
         min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
         water_circles = circles_img_bottom(water_img, min_radius, max_radius, min_vail_sep)
+        #todo don't set None
         if water_circles is None:
-            img_pair.circles = None
+            img_pair.circles = []
             if DEBUG_PLOTS:
                 plot_image(water_img, name=str(water_ds.SliceLocation), waitkey=0)
             continue
@@ -422,12 +422,13 @@ def find_packs_in_images(
             expected_radius=(vial_radius/px_size, np.ceil(2/px_size)),
             expected_sep_px=(vial_separation/px_size, np.ceil(4/px_size))
         )
+        # todo ndon't use none
         if pack_circles is None:
-            img_pair.circles = None
+            img_pair.circles = []
             continue
         # pack_circles = sort_circles_by_x_coord(pack_circles)
         img_pair.circles = pack_circles
-    count_circles = [pair for pair in fw_series.image_pairs if pair.circles is not None]
+    count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
     logger.info(f"  {len(count_circles)} slices contain phantom pack")
     # if len(count_circles) == 0:
     #     with open("no_packs_found.txt", "w") as f:
@@ -534,15 +535,19 @@ def number_of_slices_in_span(fw_series:FWSeries, span_mm: float, center_loc: flo
 
 def create_rois(fw_series:FWSeries, roi_radius):
     ''' Draw ROIs in center of all circles, if present'''
-    pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
-    for img_pair in pairs_to_analyze:
+    # pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
+    # for img_pair in pairs_to_analyze:
+    for img_pair in fw_series.image_pairs:
+        if not img_pair.has_circles():
+            img_pair.rois = []
+            continue
         water = img_pair.water
         circles = img_pair.circles
         rois = create_rois_from_circles(circles, roi_radius/water.PixelSpacing[0])
         img_pair.rois = rois
     return 
 
-def create_rois_from_circles(circles, roi_radius_px):
+def create_rois_from_circles(circles, roi_radius_px) -> list:
     rois = copy.deepcopy(circles)
     roi_radius_px = np.uint8(roi_radius_px)
     for i in range(len(rois)):
@@ -560,93 +565,6 @@ def print_mean_median_values(pdff_means, pdff_medians):
         median_str += f"{md:.2f}, "
     print(mean_str)
     print(median_str)
-
-# def load_dicoms(directory_path:str, turbo_mode=False):
-#     if turbo_mode:
-#         logger.info("...Fast loading mode enabled")
-#         return load_dicoms_fromdir_quickly(directory_path)
-#     logger.info("...Standard loading mode enabled")
-#     return load_dicoms_fromdir(directory_path)
-
-# def load_dicoms_fromdir(directory_path:str) -> list[pydicom.Dataset]:
-#     dicoms = []
-#     for path, _, files in os.walk(directory_path):
-#         dicoms.extend(load_dicoms_fromlist(path, files))
-#     return dicoms
-
-# def load_dicoms_fromlist(path, files:list[str]):
-#     dicoms = []
-#     for file in files:
-#         try:
-#             fp = os.path.join(path, file)
-#             ds = pydicom.dcmread(fp)
-#             # ds.filepath = fp # already in filename
-#             dicoms.append(ds)
-#         except:
-#             continue
-#     return dicoms
-
-# def load_dicoms_fromdir_quickly(directory_path, extensions=None):
-#     dicoms = []
-#     # find first and last files, run tests, and load data if necessary
-#     for path, _, files in os.walk(directory_path):
-#         if len(files) == 0:
-#             continue
-#         #todo: remove files if do not match extension
-#         files.sort()
-#         indx = 0
-#         ds_first = None
-#         while True: #search for first file
-#             if abs(indx) >= len(files):
-#                 break
-#             try:
-#                 fp = os.path.join(path, files[indx])
-#                 ds_first = pydicom.dcmread(fp)
-#                 break
-#             except:
-#                 indx += 1
-#                 continue
-#         indx = -1
-#         ds_last = None
-#         while (ds_first):  # search for last file if a first file was found
-#             if abs(indx) >= len(files):
-#                 break
-#             try:
-#                 fp = os.path.join(path, files[indx])
-#                 ds_last = pydicom.dcmread(fp)
-#                 break
-#             except:
-#                 indx -= 1
-#                 continue
-#         #
-#         if ds_first is None or ds_last is None:
-#             continue
-
-#         # test to see if we need to load this directory
-#         load_these_files = False
-#         # different series in one dir: load all
-#         if (ds_first.SeriesInstanceUID != ds_last.SeriesInstanceUID): 
-#             load_these_files = True
-#         if (has_relevant_data(ds_first) or has_relevant_data(ds_last)):
-#             load_these_files = True
-#         if load_these_files:
-#             additional_dicoms=load_dicoms_fromlist(path, files)
-#             dicoms.extend(additional_dicoms) 
-#     return dicoms
-
-# def has_relevant_data(ds:pydicom.Dataset) -> bool:
-#     # check if any load_labels match tags in this dataset
-#     image_type = ds.get("ImageType")
-#     series_desc = ds.get("SeriesDescription")
-#     if image_type:
-#         s1 = set(image_type)
-#         s2 = set(load_labels['image_type'])
-#         if len(s1.intersection(s2)) > 0:
-#             return True
-#     if series_desc:
-#         if any(element in series_desc.lower() for element in load_labels['series_description']):
-#             return True
-#     return False    
 
 def find_imagetype(dicoms:list[pydicom.Dataset], contrast:str) -> list[pydicom.Dataset]:
     images = []
@@ -692,7 +610,7 @@ def find_phantom_pack(
     """
     phantoms = []
     if (circles_in.shape[1] < num_circles):
-        return None
+        return []
     # Sort circles by y-coordinate to facilitate grouping
     circles = np.uint16(np.around(circles_in))
     circles = circles[0,:]
@@ -862,16 +780,16 @@ def plot_array(img_pack_data:list[dict], dest_filepath:str=None,display_image=Fa
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-def plot_results(fw_series:FWSeries, dest_filepath:str="", display_image=False):
+def plot_results(image_pairs:list[ImagePair], dest_filepath:str="", display_image=False):
     """Plot PDFF and water images with ROIs using OpenCV."""
     cols = 2
-    rows = np.uint32(len(fw_series.image_pairs))
+    rows = np.uint32(len(image_pairs))
     # Create a blank canvas to hold the images
-    cimg_setup = cv2.cvtColor(np.uint8(fw_series.image_pairs[0].water.pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
+    cimg_setup = cv2.cvtColor(np.uint8(image_pairs[0].water.pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
     height, width, channels = cimg_setup.shape
 
     canvas = np.zeros((height * rows, width * cols, channels), dtype=np.uint8)
-    for i, img_pair in enumerate(fw_series.image_pairs):
+    for i, img_pair in enumerate(image_pairs):
         cimg_water = np.uint8(cv2.normalize(img_pair.water.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
         cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
         cimg_pdff = np.uint8(cv2.normalize(img_pair.pdff.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
@@ -957,19 +875,19 @@ def get_image_info(fw_series:FWSeries) -> dict:
     info["SeriesNumber_water"] = water.get("SeriesNumber")
     return info
 
-def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''):
+def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
     # each entry in this will will be the 5 vials  in a slice
     pdff_means = []
     pdff_medians = []
     pdff_stddevs = []
     slice_locations = []
-    pdff_series_number = img_pack_data[0]["pdff"].SeriesNumber
-    for img in img_pack_data:
+
+    for img in fw_series.image_pairs:
         mystats = slice_stats(img)
         pdff_means.append(mystats['pdff_means'])
         pdff_medians.append(mystats['pdff_medians'])
         pdff_stddevs.append(mystats['pdff_stddevs'])
-        slice_locations.append(img["pdff"].SliceLocation)
+        slice_locations.append(img.location_full)
     #convert to np.array and transpose, so that each row is one roi loc across slices
     data_means = np.array(pdff_means).transpose()
     data_medians = np.array(pdff_means).transpose()
@@ -977,18 +895,18 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
 
 
     for i in range(data_means.shape[0]):
-        plt.errorbar(slice_locations, data_means[i],  yerr=data_stddevs[i], fmt='-o', label=f"Mean {i}")
+        plt.errorbar(slice_locations, data_means[i],  yerr=data_stddevs[i], fmt='.', label=f"Mean {i}")
     if len(vert_lines) > 0:
         plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
         plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
-    plt.title("Mean +/- StdDev across slices for each ROI")
+    plt.title(f"PDFF Means +/- StdDev {fw_series.series_number_pdff} - {fw_series.series_description_pdff}")
     plt.xlabel("Slice Location")
     plt.ylabel("Mean PDFF")
     plt.legend()
     plt.grid(True)
     # plt.show()
-    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_{pdff_series_number}_mean_stddev.png")
-    plt.savefig(img_filepath)
+    filename = f"{fw_series.image_pairs[0].pdff.PatientName}_{fw_series.series_number_pdff}_mean_stddev.png"
+    plt.savefig(os.path.join(directory_path, filename))
     plt.close()
 
     for i in range(data_means.shape[0]):
@@ -996,14 +914,14 @@ def plot_slice_values(img_pack_data:list[dict], vert_lines=[], directory_path=''
     if len(vert_lines) > 0: 
         plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
         plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
-    plt.title("Meadian PDFF across slices for each ROI")
+    plt.title(f"Median PDFFs per slice {fw_series.series_number_pdff} - {fw_series.series_description_pdff}")
     plt.xlabel("Slice Location")
     plt.ylabel("Median PDFF")
     plt.legend()
     plt.grid(True)
     # plt.show()
-    img_filepath = os.path.join(directory_path, f"{img_pack_data[0]['pdff'].PatientName}_{pdff_series_number}_median.png")
-    plt.savefig(img_filepath)
+    filename = f"{fw_series.image_pairs[0].pdff.PatientName}_{fw_series.series_number_pdff}_median.png"
+    plt.savefig(os.path.join(directory_path, filename))
     plt.close()
     
 
