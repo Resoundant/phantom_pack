@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.StreamHandler())
 
 # debug flags
-DEBUG_VERBOSE = False
+DEBUG_VERBOSE = True
 DEBUG_PLOTS = False
 MATCH_TRACE = False
 # circle index helpers
@@ -29,6 +29,7 @@ CR = 2
 OUTPUT_DIR = "phantompack_results"
 VIAL_RADIUS_MM = 19/2      # radius of the phantom pack vials
 VIAL_SEP_MM = 31           # 20px*1.56mm/px
+VIAL_SEP_TOLERANCE_MM = 6  
 ROI_RADIUS_MM = 13/2       # radius of the phantom pack ROI
 RADIUS_TOLERANCE_MM = 4    # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
 VERTICAL_ALIGNMENT_TOLERANCE_MM = 7
@@ -295,6 +296,7 @@ def composite_statistics(fw_series:FWSeries, min_loc, max_loc) -> dict:
             vals = get_values_in_roi(pdff, roi)
             masked_values[roi_index].extend(vals)
 
+    # todo: rigid, doesn't handle situations where rois have different number of pixels
     # cast into np.array to take mean of each row, where a row contains the values for rois across slices
     np_arr = np.array(masked_values)
     # calculate mean across slices for a given roi
@@ -374,14 +376,17 @@ def find_packs_in_images(
         radius_tolerance = RADIUS_TOLERANCE_MM,
         vert_align_tol = VERTICAL_ALIGNMENT_TOLERANCE_MM,
         vial_separation = VIAL_SEP_MM,
+        vial_sep_tolerance = VIAL_SEP_TOLERANCE_MM,
         ):
     ''' 
         Finds circles in pdff/water image pairs ammends the fw_series.image_pairs to include those circles
     '''
     for img_pair in fw_series.image_pairs:
+        if (img_pair.location_full == 6.5):
+            print("pause for effect")
         water_ds = img_pair.water
         water_img = water_ds.pixel_array
-        px_size = water_ds.PixelSpacing[0]
+        px_size = img_pair.pixel_spacing
         min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
         water_circles = circles_img_bottom(water_img, min_radius, max_radius, min_vail_sep)
         #todo don't set None
@@ -391,14 +396,14 @@ def find_packs_in_images(
                 plot_image(water_img, name=str(water_ds.SliceLocation), waitkey=0)
             continue
         if DEBUG_PLOTS:
-            water_img = remove_outliers_mad(water_img, threshold=3.5)
+            # water_img = remove_outliers_mad(water_img, threshold=3.5)
             plot_circles_ndarray(water_img, water_circles, name=str(water_ds.SliceLocation), waitkey=0)
         pack_circles = find_phantom_pack(
             water_circles, 
             num_circles=5,
             row_tolerance_px=vert_align_tol/px_size,
-            expected_radius=(vial_radius/px_size, np.ceil(2/px_size)),
-            expected_sep_px=(vial_separation/px_size, np.ceil(4/px_size))
+            expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
+            expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
         )
         # todo ndon't use none
         if pack_circles is None:
@@ -610,7 +615,7 @@ def find_phantom_pack(
         phantoms = similar_radius
 
     # keep only simarly-radius groups that meet minimum num circles
-    phantoms = [g for g in phantoms if len(g) >= num_circles]
+    phantoms = [g for g in phantoms if len(g) == num_circles]
     if phantoms == []:
         return None
     if len(phantoms) > 1:
@@ -624,7 +629,7 @@ def find_phantom_pack(
         for j in range(len(phantoms)-1):
             phantom_sep = float(phantoms[j+1][0]) - float(phantoms[j][0])
             if (abs(phantom_sep - expected_sep_px[0]) > expected_sep_px[1]):
-                # logger.info(f"found cirlce outlier")
+                # logger.info(f"found circle outlier")
                 remove_indeces.append(j)
         sorted(remove_indeces, reverse=True)
         for i in remove_indeces:
