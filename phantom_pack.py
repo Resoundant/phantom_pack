@@ -382,8 +382,6 @@ def find_packs_in_images(
         Finds circles in pdff/water image pairs ammends the fw_series.image_pairs to include those circles
     '''
     for img_pair in fw_series.image_pairs:
-        if (img_pair.location_full == 6.5):
-            print("pause for effect")
         water_ds = img_pair.water
         water_img = water_ds.pixel_array
         px_size = img_pair.pixel_spacing
@@ -405,7 +403,7 @@ def find_packs_in_images(
             expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
             expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
         )
-        # todo ndon't use none
+        # todo don't use none
         if pack_circles is None:
             img_pair.circles = []
             continue
@@ -563,7 +561,7 @@ def find_phantom_pack(
         num_circles:int = 5, row_tolerance_px = 5, 
         expected_radius:tuple[float,float]|None = None, 
         expected_sep_px:tuple[float,float]|None = None
-        ):
+        ) -> list:
     """
     Finds the  group of 5 circles that lie roughly in a horizontal line.
 
@@ -599,13 +597,12 @@ def find_phantom_pack(
     # only keep horizontal groups with at least 5 circles
     phantoms = [g for g in horizontal_groups if len(g) >= num_circles]
     if phantoms == []:
-        return None
+        return []
 
     # only keep circles in expected_radius +/- px_tolerance
     if expected_radius != None:
         similar_radius = []
         for row in phantoms:
-            # phantoms = [g for g in row if (abs(float(c[2]) - expected_radius[0]) <= expected_radius[1] for c in g)]
             g = []
             for c in row:
                 radius = abs(float(c[2]) - expected_radius[0]) 
@@ -635,6 +632,7 @@ def find_phantom_pack(
         for i in remove_indeces:
             phantoms.pop(i)
 
+    phantoms = [g for g in phantoms if len(g) == num_circles]
     return phantoms
 
 def check_vial_spacing(ph, min_space, max_space) -> bool:
