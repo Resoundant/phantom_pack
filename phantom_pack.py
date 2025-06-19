@@ -403,12 +403,10 @@ def find_packs_in_images(
             expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
             expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
         )
-        # todo don't use none
-        if pack_circles is None:
-            img_pair.circles = []
-            continue
-        # pack_circles = sort_circles_by_x_coord(pack_circles)
         img_pair.circles = pack_circles
+        if pack_circles == []:
+            continue
+        
     count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
     logger.info(f"  {len(count_circles)} slices contain phantom pack")
     # if len(count_circles) == 0:
@@ -632,7 +630,9 @@ def find_phantom_pack(
         for i in remove_indeces:
             phantoms.pop(i)
 
-    phantoms = [g for g in phantoms if len(g) == num_circles]
+    if len(phantoms) != num_circles:
+        # print(f"   ... so close - phantom has {len(phantoms)} circles, must be {num_circles}")
+        return []
     return phantoms
 
 def check_vial_spacing(ph, min_space, max_space) -> bool:

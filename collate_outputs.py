@@ -5,10 +5,7 @@ import json
 import glob
 import pandas as pd
 
-# sys.argv= ['this', r'C:\testdata\PhantomPack']
-if __name__ == '__main__':
-    # collect all .json files in top_dir, recursively
-    top_dir = sys.argv[1]
+def collate_outputs(top_dir):
     glob_str = os.path.join(top_dir, '**', '*.json')
     files = glob.glob(glob_str, recursive=True)
     json_data_list = []
@@ -76,4 +73,11 @@ if __name__ == '__main__':
         exit(1)
     df = pd.concat(df_list, ignore_index=True)
     df.to_excel(output_file)
+
+# sys.argv= ['this', r'C:\testdata\PhantomPack']
+if __name__ == '__main__':
+    # collect all .json files in top_dir, recursively
+    top_dir = sys.argv[1]
+    collate_outputs(top_dir)
+
 
