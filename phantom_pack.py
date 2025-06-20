@@ -95,7 +95,7 @@ def phantom_pack(
         vert_align_tol = VERTICAL_ALIGNMENT_TOLERANCE_MM,
         roi_radius = ROI_RADIUS_MM,
         span_mm=ANALYSIS_SPAN_MM,
-    ):
+    ) -> dict:
     '''
     process all pdff data in directory_path
     return a list of dictionaries containing results for each pdff/water pair
@@ -117,7 +117,7 @@ def phantom_pack(
     fw_series_paired = find_fw_pairs(all_dicoms) #todo: rename variables to clarify
     if len(fw_series_paired) == 0:
         logger.warning(f"No PDFF/Water data found in {directory_path}")
-        return 
+        return {}
     logger.info(f'========================================')
     logger.info(f'Found {len(fw_series_paired)} pdff/water series')
     logger.info('')
@@ -152,43 +152,50 @@ def phantom_pack(
             logger.warning(f"No pack midpoint found for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
             continue
         results = compute_and_save_results(span_mm, output_dir, fw_serie)
-    return 
+    return results
 
 def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
-    min_loc = fw_serie.pack_midpoint-span_mm/2
-    max_loc = fw_serie.pack_midpoint+span_mm/2
-    composite_results = composite_statistics(fw_serie, min_loc, max_loc)
-        # collect info about dataset
-    image_info = get_image_info(fw_serie)
-        # save canvas of all pdff water pairs with circles
-    array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
-    plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-        # save image of just the selected slices
-    array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-    image_pairs_in_span = img_pairs_in_span(fw_serie, min_loc, max_loc)
-    plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
-        # save plots of slice values
-    plot_slice_values(fw_serie, vert_lines=[min_loc, max_loc], directory_path=output_dir)
-    results = composite_results | image_info
+    # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
+    # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
+    # partial data
+    try: 
+        min_loc = fw_serie.pack_midpoint-span_mm/2
+        max_loc = fw_serie.pack_midpoint+span_mm/2
+        composite_results = composite_statistics(fw_serie, min_loc, max_loc)
+            # collect info about dataset
+        image_info = get_image_info(fw_serie)
+            # save canvas of all pdff water pairs with circles
+        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+        plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
+            # save image of just the selected slices
+        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+        image_pairs_in_span = img_pairs_in_span(fw_serie, min_loc, max_loc)
+        plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+            # save plots of slice values
+        plot_slice_values(fw_serie, vert_lines=[min_loc, max_loc], directory_path=output_dir)
+        results = composite_results | image_info
 
-    if results:
-        file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
-        with open(file_path, 'w') as file:
-            json.dump(results, file, indent=4)
-        logger.info(f"  JSON data saved to {file_path}")
-    if MATCH_TRACE:
-        trace_data = []
-        for imgs in fw_serie.image_pairs:
-            trace_data.append({
-                "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
-                "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
-                "pdff_filename" : f"Series {imgs.pdff.filename}",
-                "water_filename" : f"Series {imgs.water.filename}",
-            })
-        file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
-        with open(file_path, 'w') as file:
-            json.dump(trace_data, file, indent=4)
-    return results
+        if results:
+            file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
+            with open(file_path, 'w') as file:
+                json.dump(results, file, indent=4)
+            logger.info(f"  JSON data saved to {file_path}")
+        if MATCH_TRACE:
+            trace_data = []
+            for imgs in fw_serie.image_pairs:
+                trace_data.append({
+                    "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
+                    "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
+                    "pdff_filename" : f"Series {imgs.pdff.filename}",
+                    "water_filename" : f"Series {imgs.water.filename}",
+                })
+            file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
+            with open(file_path, 'w') as file:
+                json.dump(trace_data, file, indent=4)
+        return results
+    except:
+        logger.warning(f"Error computing statistics for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+        return {}
 
 def log_unknowns_to_file(output_dir, all_dicoms):
     unknowns = [x for x in all_dicoms if x.image_label == "unknown"]
@@ -583,6 +590,7 @@ def find_phantom_pack(
     circles = sorted(circles, key=lambda c: c[1])
     
     # Find all groups of circles that have similar y-coordinates
+    # This allows that their may be more than one row of circles
     # bug: this will duplicate rows, leaving off first entry in each subsequent row
     horizontal_groups = []
     for i in range(len(circles)):
@@ -613,6 +621,8 @@ def find_phantom_pack(
     phantoms = [g for g in phantoms if len(g) == num_circles]
     if phantoms == []:
         return None
+    # HACK - At this point we're done messing aruond with this multiple row stuff; if there
+    # is more than one row of 5 circles, we're only keeping the first 
     if len(phantoms) > 1:
         logger.warning(f"HACK - {len(phantoms)} found, keeping only first phantom in list")
     phantoms = phantoms[0]
