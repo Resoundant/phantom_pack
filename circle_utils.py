@@ -1,6 +1,8 @@
 import numpy as np 
 import cv2
 import copy
+import logging
+logger = logging.getLogger(__name__)
 
 def circle_finder_gen(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=2, maxRadius:int=20):
     # # docstring of HoughCircles: 
@@ -31,13 +33,19 @@ def circle_finder_general(img:np.ndarray, minDist:float=0.01, param1:float=300, 
     return circles
 
 
-def overlay_circles(img:np.ndarray, circles:np.ndarray):
+def overlay_circles(img:np.ndarray, circles:np.ndarray) -> np.ndarray:
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     np_circles = np.uint16(np.around(circles))
     for c in np_circles:
         cv2.circle(cimg,(c[0],c[1]),c[2],(0,255,0),2)
-    display_image(cimg, name='Overlay')
+    return cimg
+
+def overlay_circles_cimg(cimg:np.ndarray, circles:np.ndarray) -> np.ndarray:
+    np_circles = np.uint16(np.around(circles))
+    for c in np_circles:
+        cv2.circle(cimg,(c[0],c[1]),c[2],(0,255,0),2)
+    return cimg
 
 def display_image(img:np.ndarray, name='display_image', waitkey=0, normalize=False):
     if normalize:
@@ -90,6 +98,33 @@ def test_sort_topleft_to_bottomright():
     for i in range(len(sorted_coords)):
         assert sorted_coords[i][0] == coords[i][0]
         assert sorted_coords[i][1] == coords[i][1]
+
+import numpy as np
+
+def coords_match_within_tolerance(coords1, coords2, tolerance=2.0):
+    """
+    Return True if the coordinates from each array are the same within a radius tolerance.
+    Requires that the two sets of coordinates have the same length.
+
+    Parameters:
+    coords1 (ndarray): First array of x, y coordinates
+    coords2 (ndarray): Second array of x, y coordinates
+    tolerance (float): Radius tolerance
+
+    Returns:
+    bool: True if coordinates match within tolerance, False otherwise
+    """
+    # Check that the arrays have the same length
+    if len(coords1) != len(coords2):
+        logger.error("Coordinate match error: Arrays must have the same length")
+        return False
+    # sort the coordinates
+    coords1 = sort_topleft_to_bottomright(coords1)
+    coords2 = sort_topleft_to_bottomright(coords2)
+    # Calculate the Euclidean distance between each pair of coordinates
+    distances = np.linalg.norm(coords1 - coords2, axis=1)
+    # Check if all distances are within the tolerance
+    return np.all(distances <= tolerance) 
 
 if __name__ == '__main__':
     test_sort_topleft_to_bottomright()

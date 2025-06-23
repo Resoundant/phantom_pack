@@ -48,8 +48,8 @@ def simulate_sphere(randomize=False) -> tuple[np.ndarray, np.ndarray]:
             x_rand = 0
             y_rand = 0
             if randomize:
-                x_rand = int(abs(np.random.normal(0, 0.3*circle_radius)))
-                y_rand = int(abs(np.random.normal(0, 0.3*circle_radius)))
+                x_rand = int(abs(np.random.normal(0, 0.2*circle_radius)))
+                y_rand = int(abs(np.random.normal(0, 0.2*circle_radius)))
             x = int(j * circle_centers + circle_centers // 2 + x_offset + x_rand)
             y = int(i * circle_centers + circle_centers // 2 + y_offset + y_rand)
             # fill vials
