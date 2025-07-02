@@ -629,16 +629,20 @@ def find_phantom_pack(
 
     # only keep circles in expected_sep +/- px_tolerance
     if expected_sep_px != None:
-        remove_indeces = []
+        keep_indeces = []
         phantoms = sort_circles_by_x_coord(phantoms)
         for j in range(len(phantoms)-1):
             phantom_sep = float(phantoms[j+1][0]) - float(phantoms[j][0])
-            if (abs(phantom_sep - expected_sep_px[0]) > expected_sep_px[1]):
+            if (abs(phantom_sep - expected_sep_px[0]) < expected_sep_px[1]):
+                keep_indeces.append(j)
+            # else:  
                 # logger.info(f"found circle outlier")
-                remove_indeces.append(j)
-        sorted(remove_indeces, reverse=True)
-        for i in remove_indeces:
-            phantoms.pop(i)
+        sorted(keep_indeces)
+        phantom_tmp = []
+        for i in keep_indeces:
+            phantom_tmp.append(phantoms[i])
+        phantoms = phantom_tmp
+
 
     if len(phantoms) != num_circles:
         # print(f"   ... so close - phantom has {len(phantoms)} circles, must be {num_circles}")
