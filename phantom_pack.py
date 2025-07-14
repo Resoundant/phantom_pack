@@ -620,7 +620,7 @@ def find_phantom_pack(
     # keep only simarly-radius groups that meet minimum num circles
     phantoms = [g for g in phantoms if len(g) == num_circles]
     if phantoms == []:
-        return None
+        return []
     # HACK - At this point we're done messing aruond with this multiple row stuff; if there
     # is more than one row of 5 circles, we're only keeping the first 
     if len(phantoms) > 1:
