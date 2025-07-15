@@ -27,7 +27,7 @@ if __name__ == "__main__":
     cimg = cu.overlay_circles(pdff, rois)
     cimg = cu.overlay_circles_cimg(cimg, water_circles)
     cu.display_image(cimg, name="pdff with ROIs and water circles")
-    circles_match = cu.coords_match_within_tolerance(circles, water_circles, tolerance=4)
+    circles_match = cu.coords_match_within_tolerance(circles, water_circles, tolerance=4.0)
     if circles_match:
         print("Circles match")
     else:
