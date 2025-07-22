@@ -11,6 +11,7 @@ import time
 from image_labels import identifying_labels
 from statistics import mode
 from load_dicoms import load_dicoms
+from circle_grouping import find_circle_groups
 import logging
 
 logger = logging.getLogger(__name__)
@@ -135,14 +136,12 @@ def phantom_pack(
         logger.info(f"Processing PDFF series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
         logger.info(f"     with WATER series {fw_serie.series_number_water} {fw_serie.series_description_water}")
 
-        # find circles in images
         find_packs_in_images(
             fw_serie,
             vial_radius=vial_radius,
             radius_tolerance=radius_tolerance,
             vert_align_tol=vert_align_tol
         )
-
         sort_data_by_sliceloc(fw_serie)
         create_rois(fw_serie, roi_radius=roi_radius) # put ROIs from all found circles
 
@@ -403,16 +402,29 @@ def find_packs_in_images(
         if DEBUG_PLOTS:
             # water_img = remove_outliers_mad(water_img, threshold=3.5)
             plot_circles_ndarray(water_img, water_circles, name=str(water_ds.SliceLocation), waitkey=0)
-        pack_circles = find_phantom_pack(
+        # pack_circles = find_phantom_pack(
+        #     water_circles, 
+        #     num_circles=5,
+        #     row_tolerance_px=vert_align_tol/px_size,
+        #     expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
+        #     expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
+        # )
+        num_circles_in_pack = 5
+        water_circles = reshape_and_sort_circles(water_circles, num_circles_in_pack)
+        pack_circles = find_circle_groups(
             water_circles, 
-            num_circles=5,
-            row_tolerance_px=vert_align_tol/px_size,
-            expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
-            expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
-        )
-        img_pair.circles = pack_circles
+            num_circles_in_group = num_circles_in_pack, 
+            radius_tol = radius_tolerance/vial_radius,
+            linear_tol = vert_align_tol/vial_separation, 
+            spacing_tol = vial_sep_tolerance/vial_separation)
         if pack_circles == []:
             continue
+        # if len(pack_circles) > 1:
+        #     img_pair.circles = pack_circles[0]
+        # else: 
+        #     img_pair.circles = pack_circles
+        # drop trivial first dimension
+        img_pair.circles = pack_circles[0]
         
     count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
     logger.info(f"  {len(count_circles)} slices contain phantom pack")
@@ -421,6 +433,15 @@ def find_packs_in_images(
     #         f.write(f"Series {water_ds.SeriesNumber}, {water_ds.SeriesDescription}")
     return
 
+def reshape_and_sort_circles(circles_in:np.ndarray, num_circles=5) -> list: #np.ndarray:
+    # convert from mdarray to list, return empty list if fewsert than num_circles 
+    if (circles_in.shape[1] < num_circles):
+        return []
+    # Sort circles by y-coordinate to facilitate grouping
+    circles = np.uint16(np.around(circles_in))
+    circles = circles[0,:]
+    circles = sorted(circles, key=lambda c: c[1])
+    return circles #np.ndarray(circles)
 
 def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[FWSeries]:
     # Here were are matchmaking by enforcing the water image_label is same as pdff "label_match" tag
@@ -514,10 +535,8 @@ def create_rois(fw_series:FWSeries, roi_radius):
         if not img_pair.has_circles():
             img_pair.rois = []
             continue
-        water = img_pair.water
-        circles = img_pair.circles
-        rois = create_rois_from_circles(circles, roi_radius/water.PixelSpacing[0])
-        img_pair.rois = rois
+        roi_rad_px = roi_radius/img_pair.water.PixelSpacing[0]
+        img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
     return 
 
 def create_rois_from_circles(circles, roi_radius_px) -> list:

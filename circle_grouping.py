@@ -24,15 +24,15 @@ def is_valid_group(group, radius_tol, linear_tol, spacing_tol):
     radii = [r for (_, _, r) in group]
     return similar_radius(radii, radius_tol) and is_colinear(centers, linear_tol) and is_uniform_spacing(centers, spacing_tol)
 
-def find_circle_groups(circles, radius_tol=0.2, linear_tol=0.1, spacing_tol=0.1):
+def find_circle_groups(circles, num_circles_in_group = 5, radius_tol=0.2, linear_tol=0.1, spacing_tol=0.1):
     results = []
     start = time()
-    print("computing")
-    for group in combinations(circles, 5):
+    # print("computing")
+    for group in combinations(circles, num_circles_in_group):
         if is_valid_group(group, radius_tol, linear_tol, spacing_tol):
             results.append(group)
     end = time()
-    print("done in", end - start, "sec")
+    # print("done in", end - start, "sec")
     return results
 
 
@@ -44,51 +44,57 @@ def plot_circles(circles, title="Circles Visualization"):
         circle = plt.Circle((x, y), r, fill=False, edgecolor='b')
         ax.add_patch(circle)
         ax.text(x, y, str(idx), fontsize=12, ha='center', va='center', color='r')
+    min_dim = 0
+    max_dim = 256
+    # for idx, (x, y, r) in enumerate(circles):
+    #     min_dim = min(min_dim, x - r)
+    #     min_dim = min(min_dim, y - r)
+    #     max_dim = max(max_dim, x + r)
+    #     max_dim = max(max_dim, y + r)
     ax.set_aspect('equal', 'box')
-    ax.set_xlim(0, 256)
-    ax.set_ylim(0, 256)
+    ax.set_xlim(min_dim, max_dim)
+    ax.set_ylim(min_dim, max_dim)
     plt.title(title)
     plt.grid(True)
     plt.show()
 
-def generate_test_data():
+
+
+# TESTING
+TEST_CIRCLE_RADIUS = 7
+TEST_CIRCLE_SPACING = 2.5*TEST_CIRCLE_RADIUS
+TEST_CIRCLE_IMG_SIZE = 256
+TEST_CIRCLE_ROW = 60
+TEST_CIRCLE_RAD_VAR = 1
+TEST_CIRCLE_LOC_VAR = 1
+TEST_CIRCLE_LINEAR_VAR = 5  # degrees
+def generate_test_data() -> np.ndarray:
     data = []
-    img_size = 256
+    img_size = TEST_CIRCLE_IMG_SIZE
 
     # Valid aligned group
-    radius = 7
-    spacing = 2.5*radius
-    base_x, base_y = int(img_size/2-2*spacing), 60
-    radius_range_px = 1
-    loc_range_px = 1
+    radius = TEST_CIRCLE_RADIUS
+    spacing = TEST_CIRCLE_SPACING
+    base_x, base_y = int(img_size/2-2*spacing), TEST_CIRCLE_ROW
+    radius_range_px = TEST_CIRCLE_RAD_VAR
+    loc_range_px = TEST_CIRCLE_LOC_VAR
 
+    linear_skew = random.uniform(-TEST_CIRCLE_LINEAR_VAR, TEST_CIRCLE_LINEAR_VAR)
     for i in range(5):
         data.extend([
             (base_x + i * spacing + random.uniform(-loc_range_px, loc_range_px),
-            base_y + random.uniform(-loc_range_px, loc_range_px), 
+            base_y + random.uniform(-loc_range_px, loc_range_px) + (i * spacing * np.tan(np.deg2rad(linear_skew))), 
             radius + random.uniform(-radius_range_px, radius_range_px)),
         ])
-
-    # Valid non-aligned group
-    # data.extend([
-    #     (20 + 10.5, 49.5, 3.1),
-    #     (20 + 20, 50, 3),
-    #     (20 + 29.5, 50.5, 3.05),
-    #     (20 + 39.8, 49.5, 2.95),
-    #     (20 + 50.1, 50, 3),
-    # ])
     
     # Random noise circles
-    for _ in range(10):
-        x = random.uniform(0, img_size)
-        y = random.uniform(0, img_size)
-        r = random.uniform(4, 20)
-        data.append((x, y, r))
+    # for _ in range(10):
+    #     x = random.uniform(0, img_size)
+    #     y = random.uniform(0, img_size)
+    #     r = random.uniform(4, 20)
+    #     data.append((x, y, r))
         
-    # for i in range(5):
-    #     data.append((base_x + i * spacing, base_y, radius))
-        
-    return data
+    return np.array(data)
 
 def randomize_data(data):
     random.shuffle(data)
@@ -100,22 +106,33 @@ def randomize_data(data):
 def main():
     test_circles = generate_test_data()
     # randomize_data(test_circles)
-    valid_groups = find_circle_groups(test_circles)
+
+    # Find valid groups
+    linear_fudge = 5
+    radius_tol = np.ceil(TEST_CIRCLE_RAD_VAR/TEST_CIRCLE_RADIUS)
+    linear_tol = linear_fudge*np.tan(np.deg2rad(TEST_CIRCLE_LINEAR_VAR))*5/TEST_CIRCLE_SPACING
+    spacing_tol = np.ceil(TEST_CIRCLE_LOC_VAR/TEST_CIRCLE_SPACING)
+    valid_groups = find_circle_groups(test_circles, radius_tol=radius_tol, linear_tol=linear_tol, spacing_tol=spacing_tol)
 
     # Print results
-    circle_idx_map = {id(c): i for i, c in enumerate(test_circles)}
-    valid_group_indices = [[circle_idx_map[id(c)] for c in group] for group in valid_groups]
-
-    if valid_group_indices:
-        print("✅ Valid groups of 5 similar, evenly spaced, aligned circles:")
-        for group in valid_group_indices:
-            print("Group indices:", group)
-    else:
+    if len(valid_groups) == 0:
         print("❌ No valid groups found.")
         plot_circles(test_circles, "Test Circles with Labels")
-
-    # Display all circles
-    # plot_circles(test_circles, "Test Circles with Labels")
+        return
+    
+    # circle_idx_map = {id(c): i for i, c in enumerate(test_circles)}
+    # valid_group_indices = [[circle_idx_map[id(c)] for c in group] for group in valid_groups]
+    # valid_group_indices = [[i for i, c in enumerate(test_circles) if c in group] for group in valid_groups]
+    # if valid_group_indices:
+    #     print("✅ Valid groups of 5 similar, evenly spaced, aligned circles:")
+    #     for group in valid_group_indices:
+    #         print("Group indices:", group)
+    if valid_groups:
+        print("✅ Valid groups of 5 similar, evenly spaced, aligned circles:")
+        for group in valid_groups:
+            print("Group centers:", group)
+        plot_circles(test_circles, "Test Circles with Labels")
 
 if __name__ == "__main__":
-    main()
+    for i in range(10):
+        main()
