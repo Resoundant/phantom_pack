@@ -66,6 +66,44 @@ class FWSeries:
         self.series_description_water = None
         self.image_pairs:list[ImagePair] = []
         self.pack_midpoint:float|None = None
+        self.pack_first_slice:int|None = None
+        self.pack_last_slice:int|None = None
+        self.pack_first_slice_loc:float|None = None
+        self.pack_last_slice_loc:float|None = None
+
+
+    def find_pack_midpoint(self) -> float | None:
+        self.pack_midpoint = find_midpoint([x.location_full for x in self.image_pairs if x.has_circles()])
+        return self.pack_midpoint
+
+    # def number_of_slices_in_span(fw_series:FWSeries, span_mm: float, center_loc: float | None ) -> int:
+    #     if center_loc is None:
+    #         return 0
+    #     min_loc = center_loc - span_mm / 2
+    #     max_loc = center_loc + span_mm / 2
+    #     slices_in_span = [x.location_full for x in fw_series.image_pairs if min_loc <= x.location_full <= max_loc]
+    #     return len(slices_in_span)
+
+    def create_rois(self, roi_radius):
+        ''' Draw ROIs in center of all circles, if present'''
+        # pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
+        # for img_pair in pairs_to_analyze:
+        for img_pair in self.image_pairs:
+            if not img_pair.has_circles():
+                img_pair.rois = []
+                continue
+            roi_rad_px = roi_radius/img_pair.water.PixelSpacing[0]
+            img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
+        return 
+
+    def find_pack_locations(self):
+        all_locs = [x.location_full for x in self.image_pairs]
+        pack_locs = [x.location_full for x in self.image_pairs if x.has_circles()]
+        self.pack_first_slice_loc = min(pack_locs)
+        self.pack_last_slice_loc = max(pack_locs)
+        self.pack_first_slice = all_locs.index(self.pack_first_slice_loc)
+        self.pack_last_slice = all_locs.index(self.pack_last_slice_loc)
+
 
 class ImagePair:
     def __init__(self, pdff:pydicom.Dataset, water:pydicom.Dataset):
@@ -143,10 +181,11 @@ def phantom_pack(
             vert_align_tol=vert_align_tol
         )
         sort_data_by_sliceloc(fw_serie)
-        create_rois(fw_serie, roi_radius=roi_radius) # put ROIs from all found circles
+        fw_serie.create_rois(roi_radius=roi_radius) # put ROIs from all found circles
 
         # COMPUTE STATISTICS
-        fw_serie.pack_midpoint = find_pack_midpoint(fw_serie)
+        fw_serie.pack_midpoint = fw_serie.find_pack_midpoint() #set fw_series.pack_midpoint
+        fw_serie.find_pack_locations() # set first and last locations and indeces of pack 
         if fw_serie.pack_midpoint is None:
             logger.warning(f"No pack midpoint found for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
             continue
@@ -158,20 +197,20 @@ def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
     # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
     # partial data
     try: 
-        min_loc = fw_serie.pack_midpoint-span_mm/2
-        max_loc = fw_serie.pack_midpoint+span_mm/2
-        composite_results = composite_statistics(fw_serie, min_loc, max_loc)
-            # collect info about dataset
+        stats_min_loc = fw_serie.pack_midpoint-span_mm/2
+        stats_max_loc = fw_serie.pack_midpoint+span_mm/2
+        composite_results = composite_statistics(fw_serie, stats_min_loc, stats_max_loc)
+        # collect info about dataset
         image_info = get_image_info(fw_serie)
-            # save canvas of all pdff water pairs with circles
+        # save canvas of all pdff water pairs with circles
         array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
         plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-            # save image of just the selected slices
+        # save image of just the selected slices
         array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-        image_pairs_in_span = img_pairs_in_span(fw_serie, min_loc, max_loc)
+        image_pairs_in_span = img_pairs_in_span(fw_serie, stats_min_loc, stats_max_loc)
         plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
-            # save plots of slice values
-        plot_slice_values(fw_serie, vert_lines=[min_loc, max_loc], directory_path=output_dir)
+        # save plots of slice values
+        plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
         results = composite_results | image_info
 
         if results:
@@ -274,7 +313,7 @@ def slice_stats(img:ImagePair) -> dict:
     stats["pdff_stddevs"] = pdff_stddevs
     return stats
 
-def composite_statistics(fw_series:FWSeries, min_loc, max_loc) -> dict:
+def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> dict:
     '''
     Calculate the composite stats for slices in range (min_loc, max_loc)
     Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]'''
@@ -285,21 +324,22 @@ def composite_statistics(fw_series:FWSeries, min_loc, max_loc) -> dict:
         if img_pair.has_rois():
             num_rois_in_images.append(len(img_pair.rois))
     if len(set(num_rois_in_images)) > 1:
-        logger.warning("WARNING: not all images have same number of ROIs ")
+        logger.warning("WARNING: not all images have same number of ROIs! This may cause issues")
 
-    # create lists of all value in rois across all slices in range
+    # to calc mean, create lists made up of all pixels value in rois across all slices in range
     num_rois_mode = mode(num_rois_in_images)
-    masked_values = [[] for _ in range(num_rois_mode)]
+    masked_values = [[] for _ in range(num_rois_mode)] #create empty list of lists
+    img_pair_cnt = 0
     for img_pair in fw_series.image_pairs:
+        a_img_pair_indx = [i for i, x in enumerate(fw_series.image_pairs) if x.location_full == img_pair.location_full][0]
+        a_loc = float(img_pair.pdff.SliceLocation)
+        if (float(img_pair.pdff.SliceLocation) > stats_max_loc) or (float(img_pair.pdff.SliceLocation) < stats_min_loc): 
+            continue
         if not img_pair.has_rois():
             continue
-        pdff = img_pair.pdff
-        rois = img_pair.rois
-        if (pdff.SliceLocation > max_loc) or (pdff.SliceLocation < min_loc): 
-            continue
-        for roi_index, roi in enumerate(rois):
+        for roi_index, roi in enumerate(img_pair.rois):
             # make a circle mask that can be applied to pdff
-            vals = get_values_in_roi(pdff, roi)
+            vals = get_values_in_roi(img_pair.pdff, roi)
             masked_values[roi_index].extend(vals)
 
     # todo: rigid, doesn't handle situations where rois have different number of pixels
@@ -334,37 +374,6 @@ def get_values_in_roi(pdff, r) -> list:
     vals = apply_mask(pdff.pixel_array, mask)
     return vals
 
-def composite_statistics_fromlist(img_pack_data:list[dict], sliceslocs_to_analyze:list) -> dict:
-    # calculate the composite stats for slices in sliceslocs_to_analyze
-    masked_values = None
-    # extract the pdff mean and median list
-    for img in img_pack_data:
-        if "rois" not in img:
-            continue
-        pdff = img["pdff"]
-        rois = img["rois"]
-        if pdff.SliceLocation not in sliceslocs_to_analyze: #todo: too specific, just use a range
-            continue
-        if masked_values == None:
-            masked_values = [[] for _ in range(len(rois))]
-        roi_index = 0
-        for r in rois:
-            # make a circle mask that can be applied to pdff
-            mask = np.zeros(pdff.pixel_array.shape, dtype=np.uint8)
-            cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
-            vals = apply_mask(pdff.pixel_array, mask)
-            masked_values[roi_index].extend(vals)
-            roi_index += 1
-    # caste in np.array to take mean of each row, where a row contains the values for rois across slices
-    np_arr = np.array(masked_values)
-    # calculate mean across slices for a given roi
-    results_dict = {}
-    results_dict['means'] = np.mean(np_arr, axis=1).tolist()
-    results_dict['medians']  = np.median(np_arr, axis=1).tolist()
-    results_dict['mins'] = np.min(np_arr, axis=1).tolist()
-    results_dict['maxs'] = np.max(np_arr, axis=1).tolist()
-    return results_dict
-
 def create_negative_image(img):
     return 255 - np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
 
@@ -393,7 +402,6 @@ def find_packs_in_images(
         px_size = img_pair.pixel_spacing
         min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
         water_circles = circles_img_bottom(water_img, min_radius, max_radius, min_vail_sep)
-        #todo don't set None
         if water_circles is None:
             img_pair.circles = []
             if DEBUG_PLOTS:
@@ -410,9 +418,11 @@ def find_packs_in_images(
         #     expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
         # )
         num_circles_in_pack = 5
-        water_circles = reshape_and_sort_circles(water_circles, num_circles_in_pack)
+        water_circles = reshape_and_sort_circles(water_circles, num_circles_in_pack) # drop trivial first dimension
         pack_circles = find_circle_groups(
-            water_circles, 
+            water_circles,
+            radius = vial_radius/px_size,
+            spacing = vial_separation/px_size,
             num_circles_in_group = num_circles_in_pack, 
             radius_tol = radius_tolerance/vial_radius,
             linear_tol = vert_align_tol/vial_separation, 
@@ -472,7 +482,7 @@ def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[FWSeries]:
                 fw_series.series_description_water = wat_same_loc[0].SeriesDescription
                 img_pair = ImagePair(ff,wat_same_loc[0])
                 img_pair.location = int(ff.SliceLocation)
-                img_pair.location_full = ff.SliceLocation
+                img_pair.location_full = float(ff.SliceLocation)
                 fw_series.image_pairs.append(img_pair)
         series_found.append(fw_series)
     return series_found
@@ -515,29 +525,29 @@ def find_midpoint(locations: list) -> float | None:
     midpoint = (locations[0] + locations[-1]) / 2
     return midpoint
 
-def find_pack_midpoint(fw_serie) -> float | None:
-    """Extracts slices with circles and of those locations."""
-    return find_midpoint([x.location_full for x in fw_serie.image_pairs if x.has_circles()])
+# def find_pack_midpoint(fw_serie:FWSeries) -> float | None:
+#     """Extracts slices with circles and of those locations."""
+#     return find_midpoint([x.location_full for x in fw_serie.image_pairs if x.has_circles()])
 
 def number_of_slices_in_span(fw_series:FWSeries, span_mm: float, center_loc: float | None ) -> int:
     if center_loc is None:
         return 0
-    min_loc = center_loc - span_mm / 2
-    max_loc = center_loc + span_mm / 2
-    slices_in_span = [x.location_full for x in fw_series.image_pairs if min_loc <= x.location_full <= max_loc]
+    span_min_loc = center_loc - span_mm / 2
+    span_max_loc = center_loc + span_mm / 2
+    slices_in_span = [x.location_full for x in fw_series.image_pairs if span_min_loc <= x.location_full <= span_max_loc]
     return len(slices_in_span)
 
-def create_rois(fw_series:FWSeries, roi_radius):
-    ''' Draw ROIs in center of all circles, if present'''
-    # pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
-    # for img_pair in pairs_to_analyze:
-    for img_pair in fw_series.image_pairs:
-        if not img_pair.has_circles():
-            img_pair.rois = []
-            continue
-        roi_rad_px = roi_radius/img_pair.water.PixelSpacing[0]
-        img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
-    return 
+# def create_rois(fw_series:FWSeries, roi_radius):
+#     ''' Draw ROIs in center of all circles, if present'''
+#     # pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
+#     # for img_pair in pairs_to_analyze:
+#     for img_pair in fw_series.image_pairs:
+#         if not img_pair.has_circles():
+#             img_pair.rois = []
+#             continue
+#         roi_rad_px = roi_radius/img_pair.water.PixelSpacing[0]
+#         img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
+#     return 
 
 def create_rois_from_circles(circles, roi_radius_px) -> list:
     rois = copy.deepcopy(circles)

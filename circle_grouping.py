@@ -4,8 +4,10 @@ import random
 from itertools import combinations
 from time import time
 
-def similar_radius(radii, tol=0.05):
-    return max(radii) - min(radii) <= tol * max(radii)
+def similar_radius(radii, rad=None, tol=0.05):
+    if rad is None: # no target radius provided
+        return max(radii) - min(radii) <= tol * max(radii)
+    return all(abs(x - rad) <= (tol * rad) for x in radii)
 
 def is_colinear(points, tol):
     pts = np.array(points, dtype=float)
@@ -13,23 +15,36 @@ def is_colinear(points, tol):
     _, s, _ = np.linalg.svd(pts)
     return s[1] / s[0] < tol
 
-def is_uniform_spacing(points, tol):
+def is_uniform_spacing(points, spacing=None, tol=0.1):
+    if spacing is None:
+        sorted_pts = sorted(points, key=lambda p: (p[0], p[1]))
+        dists = [np.linalg.norm(np.array(sorted_pts[i],dtype=float) - np.array(sorted_pts[i+1],dtype=float)) for i in range(len(sorted_pts) - 1)]
+        mean_d = np.mean(dists)
+        return all(abs(d - mean_d) < tol * mean_d for d in dists)
+    # bit of a hack; sort by x then y (assumes things are roughly left to right...)
     sorted_pts = sorted(points, key=lambda p: (p[0], p[1]))
-    dists = [np.linalg.norm(np.array(sorted_pts[i]) - np.array(sorted_pts[i+1])) for i in range(len(points) - 1)]
-    mean_d = np.mean(dists)
-    return all(abs(d - mean_d) < tol * mean_d for d in dists)
+    dists = [np.linalg.norm(np.array(sorted_pts[i],dtype=float) - np.array(sorted_pts[i+1],dtype=float)) for i in range(len(sorted_pts) - 1)]
+    return all(abs(d - spacing) < (tol * spacing) for d in dists)
 
-def is_valid_group(group, radius_tol, linear_tol, spacing_tol):
+# def is_valid_group(group, radius_tol, linear_tol, spacing_tol):
+#     centers = [(x, y) for (x, y, _) in group]
+#     radii = [r for (_, _, r) in group]
+#     return similar_radius(radii, radius_tol) and is_colinear(centers, linear_tol) and is_uniform_spacing(centers, spacing_tol)
+
+def is_valid_group(group, radius,  radius_tol, spacing, spacing_tol, linear_tol):
     centers = [(x, y) for (x, y, _) in group]
     radii = [r for (_, _, r) in group]
-    return similar_radius(radii, radius_tol) and is_colinear(centers, linear_tol) and is_uniform_spacing(centers, spacing_tol)
+    radius_ok = similar_radius(radii, radius, radius_tol) 
+    spacing_ok = is_uniform_spacing(centers, spacing, spacing_tol)
+    collinear_ok = is_colinear(centers, linear_tol)
+    return radius_ok and spacing_ok and collinear_ok
 
-def find_circle_groups(circles, num_circles_in_group = 5, radius_tol=0.2, linear_tol=0.1, spacing_tol=0.1):
+def find_circle_groups(circles, radius, spacing, num_circles_in_group = 5, radius_tol=0.2, spacing_tol=0.1,  linear_tol=0.1):
     results = []
     start = time()
     # print("computing")
     for group in combinations(circles, num_circles_in_group):
-        if is_valid_group(group, radius_tol, linear_tol, spacing_tol):
+        if is_valid_group(group, radius, radius_tol, spacing, spacing_tol, linear_tol):
             results.append(group)
     end = time()
     # print("done in", end - start, "sec")
@@ -112,7 +127,9 @@ def main():
     radius_tol = np.ceil(TEST_CIRCLE_RAD_VAR/TEST_CIRCLE_RADIUS)
     linear_tol = linear_fudge*np.tan(np.deg2rad(TEST_CIRCLE_LINEAR_VAR))*5/TEST_CIRCLE_SPACING
     spacing_tol = np.ceil(TEST_CIRCLE_LOC_VAR/TEST_CIRCLE_SPACING)
-    valid_groups = find_circle_groups(test_circles, radius_tol=radius_tol, linear_tol=linear_tol, spacing_tol=spacing_tol)
+    valid_groups = find_circle_groups(test_circles, 
+                        radius = TEST_CIRCLE_RADIUS, spacing = TEST_CIRCLE_SPACING, 
+                        radius_tol=radius_tol, linear_tol=linear_tol, spacing_tol=spacing_tol)
 
     # Print results
     if len(valid_groups) == 0:
