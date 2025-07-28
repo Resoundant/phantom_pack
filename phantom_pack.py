@@ -104,6 +104,9 @@ class FWSeries:
         self.pack_first_slice = all_locs.index(self.pack_first_slice_loc)
         self.pack_last_slice = all_locs.index(self.pack_last_slice_loc)
 
+    def sort_data_by_sliceloc(self):
+        ''' Re-orders the fw_sereies.image_paris list by slice location, ascending) '''
+        self.image_pairs = sorted(self.image_pairs, key=lambda x: x.location)
 
 class ImagePair:
     def __init__(self, pdff:pydicom.Dataset, water:pydicom.Dataset):
@@ -180,7 +183,7 @@ def phantom_pack(
             radius_tolerance=radius_tolerance,
             vert_align_tol=vert_align_tol
         )
-        sort_data_by_sliceloc(fw_serie)
+        fw_serie.sort_data_by_sliceloc()
         fw_serie.create_rois(roi_radius=roi_radius) # put ROIs from all found circles
 
         # COMPUTE STATISTICS
@@ -200,6 +203,10 @@ def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
         stats_min_loc = fw_serie.pack_midpoint-span_mm/2
         stats_max_loc = fw_serie.pack_midpoint+span_mm/2
         composite_results = composite_statistics(fw_serie, stats_min_loc, stats_max_loc)
+    except:
+        logger.warning(f"Error computing comsposite statistics for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+
+    try:
         # collect info about dataset
         image_info = get_image_info(fw_serie)
         # save canvas of all pdff water pairs with circles
@@ -209,6 +216,10 @@ def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
         array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
         image_pairs_in_span = img_pairs_in_span(fw_serie, stats_min_loc, stats_max_loc)
         plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+    except:
+        logger.warning(f"Error saving plots for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+
+    try:
         # save plots of slice values
         plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
         results = composite_results | image_info
@@ -232,7 +243,7 @@ def compute_and_save_results(span_mm, output_dir, fw_serie) -> dict:
                 json.dump(trace_data, file, indent=4)
         return results
     except:
-        logger.warning(f"Error computing statistics for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+        logger.warning(f"Error computing per-slice for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
         return {}
 
 def log_unknowns_to_file(output_dir, all_dicoms):
@@ -316,7 +327,16 @@ def slice_stats(img:ImagePair) -> dict:
 def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> dict:
     '''
     Calculate the composite stats for slices in range (min_loc, max_loc)
-    Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]'''
+    Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
+    '''
+    # sort all circles and rois by x-coord
+    # this is necessary so that when cast into an np array, all of the rois across
+    # slices are properly grouped
+    for img_pair in fw_series.image_pairs:
+        if img_pair.has_circles():
+            img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
+        if img_pair.has_rois():
+            img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
 
     # quickly check that same number of ROIs in all images
     num_rois_in_images = []
@@ -326,13 +346,21 @@ def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> di
     if len(set(num_rois_in_images)) > 1:
         logger.warning("WARNING: not all images have same number of ROIs! This may cause issues")
 
+    # check that all of the rois are aligned across slices, by making sure their centers are withing the rois radius
+    # so that we don't mix values from different ROIs
+    for i in range(len(fw_series.image_pairs)-1):
+        if fw_series.image_pairs[i].has_rois() and fw_series.image_pairs[i+1].has_rois():
+            for j in range(len(fw_series.image_pairs[i].rois)-1):
+                if abs(float(fw_series.image_pairs[i].rois[j][CX]) - float(fw_series.image_pairs[i+1].rois[j][CX])) > fw_series.image_pairs[i].rois[j][CR]:
+                    logger.warning("WARNING: ROIs not aligned across slices!")
+                if abs(float(fw_series.image_pairs[i].rois[j][CY]) - float(fw_series.image_pairs[i+1].rois[j][CY])) > fw_series.image_pairs[i].rois[j][CR]:
+                    logger.warning("WARNING: ROIs not aligned across slices!")
+            
+
     # to calc mean, create lists made up of all pixels value in rois across all slices in range
     num_rois_mode = mode(num_rois_in_images)
     masked_values = [[] for _ in range(num_rois_mode)] #create empty list of lists
-    img_pair_cnt = 0
     for img_pair in fw_series.image_pairs:
-        a_img_pair_indx = [i for i, x in enumerate(fw_series.image_pairs) if x.location_full == img_pair.location_full][0]
-        a_loc = float(img_pair.pdff.SliceLocation)
         if (float(img_pair.pdff.SliceLocation) > stats_max_loc) or (float(img_pair.pdff.SliceLocation) < stats_min_loc): 
             continue
         if not img_pair.has_rois():
@@ -513,9 +541,9 @@ def sort_circles_by_x_coord(circles:np.ndarray):
     return sorted_circles
 
 
-def sort_data_by_sliceloc(fw_series:FWSeries):
-    ''' Re-orders the fw_sereies.image_paris list by slice location, ascending) '''
-    fw_series.image_pairs = sorted(fw_series.image_pairs, key=lambda x: x.location)
+# def sort_data_by_sliceloc(fw_series:FWSeries):
+#     ''' Re-orders the fw_sereies.image_paris list by slice location, ascending) '''
+#     fw_series.image_pairs = sorted(fw_series.image_pairs, key=lambda x: x.location)
 
 def find_midpoint(locations: list) -> float | None:
     """Finds the midpoint of a list of values."""
@@ -525,10 +553,6 @@ def find_midpoint(locations: list) -> float | None:
     midpoint = (locations[0] + locations[-1]) / 2
     return midpoint
 
-# def find_pack_midpoint(fw_serie:FWSeries) -> float | None:
-#     """Extracts slices with circles and of those locations."""
-#     return find_midpoint([x.location_full for x in fw_serie.image_pairs if x.has_circles()])
-
 def number_of_slices_in_span(fw_series:FWSeries, span_mm: float, center_loc: float | None ) -> int:
     if center_loc is None:
         return 0
@@ -537,17 +561,6 @@ def number_of_slices_in_span(fw_series:FWSeries, span_mm: float, center_loc: flo
     slices_in_span = [x.location_full for x in fw_series.image_pairs if span_min_loc <= x.location_full <= span_max_loc]
     return len(slices_in_span)
 
-# def create_rois(fw_series:FWSeries, roi_radius):
-#     ''' Draw ROIs in center of all circles, if present'''
-#     # pairs_to_analyze = [x for x in fw_series.image_pairs if x.has_circles()]
-#     # for img_pair in pairs_to_analyze:
-#     for img_pair in fw_series.image_pairs:
-#         if not img_pair.has_circles():
-#             img_pair.rois = []
-#             continue
-#         roi_rad_px = roi_radius/img_pair.water.PixelSpacing[0]
-#         img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
-#     return 
 
 def create_rois_from_circles(circles, roi_radius_px) -> list:
     rois = copy.deepcopy(circles)
