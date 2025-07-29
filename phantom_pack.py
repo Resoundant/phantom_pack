@@ -438,13 +438,6 @@ def find_packs_in_images(
         if DEBUG_PLOTS:
             # water_img = remove_outliers_mad(water_img, threshold=3.5)
             plot_circles_ndarray(water_img, water_circles, name=str(water_ds.SliceLocation), waitkey=0)
-        # pack_circles = find_phantom_pack(
-        #     water_circles, 
-        #     num_circles=5,
-        #     row_tolerance_px=vert_align_tol/px_size,
-        #     expected_radius=(vial_radius/px_size, np.ceil(radius_tolerance/px_size)),
-        #     expected_sep_px=(vial_separation/px_size, np.ceil(vial_sep_tolerance/px_size))
-        # )
         num_circles_in_pack = 5
         water_circles = reshape_and_sort_circles(water_circles, num_circles_in_pack) # drop trivial first dimension
         pack_circles = find_circle_groups(
@@ -457,11 +450,7 @@ def find_packs_in_images(
             spacing_tol = vial_sep_tolerance/vial_separation)
         if pack_circles == []:
             continue
-        # if len(pack_circles) > 1:
-        #     img_pair.circles = pack_circles[0]
-        # else: 
-        #     img_pair.circles = pack_circles
-        # drop trivial first dimension
+        # drop trivial first dimension/ hack: keep only first group
         img_pair.circles = pack_circles[0]
         
     count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
@@ -603,93 +592,6 @@ def find_circles(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:fl
     # circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT_ALT, 1.5, minDist=0.01, param1=300, param2=0.99)
     return circles
 
-def find_phantom_pack(
-        circles_in, 
-        num_circles:int = 5, row_tolerance_px = 5, 
-        expected_radius:tuple[float,float]|None = None, 
-        expected_sep_px:tuple[float,float]|None = None
-        ) -> list:
-    """
-    Finds the  group of 5 circles that lie roughly in a horizontal line.
-
-    Parameters:
-        circles (list of lists): A list where each element is [x_center, y_center, radius].
-        min_num_circles (int): The minimum number of circles in a row keep.
-        row_tolerance: The maximum difference in y-coordinates to consider as vertically aligned (in a row).
-        expected_radius (tuple[float,float]): A tuple where the first element is the expected radius and the second element is the tolerance.
-            discard circles that are not in expected_radius +/- tolerance
-        expected_sep_px (tuple[float,float]): the (expected separation, tolerance) between centers of phantom 
-    
-    Returns:
-        list: The group of circles in the horizontal line.
-    """
-    phantoms = []
-    if (circles_in.shape[1] < num_circles):
-        return []
-    # Sort circles by y-coordinate to facilitate grouping
-    circles = np.uint16(np.around(circles_in))
-    circles = circles[0,:]
-    circles = sorted(circles, key=lambda c: c[1])
-    
-    # Find all groups of circles that have similar y-coordinates
-    # This allows that their may be more than one row of circles
-    # bug: this will duplicate rows, leaving off first entry in each subsequent row
-    horizontal_groups = []
-    for i in range(len(circles)):
-        group = [circles[i]]
-        for j in range(i + 1, len(circles)):
-            if abs(int(circles[j][1]) - int(circles[i][1])) <= row_tolerance_px:
-                group.append(circles[j])
-        horizontal_groups.append(group)
-
-    # only keep horizontal groups with at least 5 circles
-    phantoms = [g for g in horizontal_groups if len(g) >= num_circles]
-    if phantoms == []:
-        return []
-
-    # only keep circles in expected_radius +/- px_tolerance
-    if expected_radius != None:
-        similar_radius = []
-        for row in phantoms:
-            g = []
-            for c in row:
-                radius = abs(float(c[2]) - expected_radius[0]) 
-                if radius <= expected_radius[1]:
-                    g.append(c)
-            similar_radius.append(g)
-        phantoms = similar_radius
-
-    # keep only simarly-radius groups that meet minimum num circles
-    phantoms = [g for g in phantoms if len(g) == num_circles]
-    if phantoms == []:
-        return []
-    # HACK - At this point we're done messing aruond with this multiple row stuff; if there
-    # is more than one row of 5 circles, we're only keeping the first 
-    if len(phantoms) > 1:
-        logger.warning(f"HACK - {len(phantoms)} found, keeping only first phantom in list")
-    phantoms = phantoms[0]
-
-    # only keep circles in expected_sep +/- px_tolerance
-    if expected_sep_px != None:
-        keep_indeces = []
-        phantoms = sort_circles_by_x_coord(phantoms)
-        for j in range(len(phantoms)-1):
-            phantom_sep = float(phantoms[j+1][0]) - float(phantoms[j][0])
-            if (abs(phantom_sep - expected_sep_px[0]) < expected_sep_px[1]):
-                keep_indeces.append(j)
-            # else:  
-                # logger.info(f"found circle outlier")
-        sorted(keep_indeces)
-        phantom_tmp = []
-        for i in keep_indeces:
-            phantom_tmp.append(phantoms[i])
-        phantoms = phantom_tmp
-
-
-    if len(phantoms) != num_circles:
-        # print(f"   ... so close - phantom has {len(phantoms)} circles, must be {num_circles}")
-        return []
-    return phantoms
 
 def check_vial_spacing(ph, min_space, max_space) -> bool:
     for i in range(len(ph)-1):
