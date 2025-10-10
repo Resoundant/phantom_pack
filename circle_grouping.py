@@ -26,11 +26,6 @@ def is_uniform_spacing(points, spacing=None, tol=0.1):
     dists = [np.linalg.norm(np.array(sorted_pts[i],dtype=float) - np.array(sorted_pts[i+1],dtype=float)) for i in range(len(sorted_pts) - 1)]
     return all(abs(d - spacing) < (tol * spacing) for d in dists)
 
-# def is_valid_group(group, radius_tol, linear_tol, spacing_tol):
-#     centers = [(x, y) for (x, y, _) in group]
-#     radii = [r for (_, _, r) in group]
-#     return similar_radius(radii, radius_tol) and is_colinear(centers, linear_tol) and is_uniform_spacing(centers, spacing_tol)
-
 def is_valid_group(group, radius,  radius_tol, spacing, spacing_tol, linear_tol):
     centers = [(x, y) for (x, y, _) in group]
     radii = [r for (_, _, r) in group]
@@ -42,7 +37,6 @@ def is_valid_group(group, radius,  radius_tol, spacing, spacing_tol, linear_tol)
 def find_circle_groups(circles, radius, spacing, num_circles_in_group = 5, radius_tol=0.2, spacing_tol=0.1,  linear_tol=0.1):
     results = []
     start = time()
-    # print("computing")
     for group in combinations(circles, num_circles_in_group):
         if is_valid_group(group, radius, radius_tol, spacing, spacing_tol, linear_tol):
             results.append(group)

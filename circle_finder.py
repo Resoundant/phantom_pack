@@ -8,30 +8,32 @@ def circle_finder_gen(img:np.ndarray, minDist:float=0.01, param1:float=300, para
     # # docstring of HoughCircles: 
     # # HoughCircles(image, method, dp, minDist[, circles[, param1[, param2[, minRadius[, maxRadius]]]]]) -> circles
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, minDist, param1=param1, param2=param2, minRadius=minRadius, maxRadius=maxRadius)
-    # HOUGH_GRADIENT_ALT is supposed to be more accurate but it doesn't find any circles
-    # circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT_ALT, 1.5, minDist, param1=param1, param2=0.9, minRadius=minRadius, maxRadius=maxRadius)
-    # circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT_ALT, 1.5, minDist=0.01, param1=300, param2=0.99)
+    circles = convert_circle_array_to_list(circles)
     return circles
 
 
-def circle_finder_water(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=3, maxRadius:int=50):
+def circle_finder_water(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=3, maxRadius:int=50) -> np.ndarray:
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, minDist, param1=param1, param2=param2, minRadius=minRadius, maxRadius=maxRadius)
-    if circles is not None:
-        circles = circles[0, :]
+    circles = convert_circle_array_to_list(circles)
     return circles
 
-def circle_finder_pdff(img:np.ndarray, minDist:float=1, param1:float=20, param2:float=10, minRadius:int=3, maxRadius:int=200):
+def circle_finder_pdff(img:np.ndarray, minDist:float=1, param1:float=20, param2:float=10, minRadius:int=3, maxRadius:int=200) -> np.ndarray:
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, minDist, param1=param1, param2=param2, minRadius=minRadius, maxRadius=maxRadius)
-    if circles is not None:
-        circles = circles[0, :]
+    circles = convert_circle_array_to_list(circles)
     return circles
 
-def circle_finder_general(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=2, maxRadius:int=200):
+def circle_finder_general(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=2, maxRadius:int=200) -> np.ndarray:
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, minDist, param1=param1, param2=param2, minRadius=minRadius, maxRadius=maxRadius)
-    if circles is not None:
-        circles = circles[0, :]
+    circles = convert_circle_array_to_list(circles)
     return circles
 
+def convert_circle_array_to_list(circles:np.ndarray) -> np.ndarray:
+    if circles is not None:
+        circles_list = circles[0, :]
+        #circles_list = np.uint16(np.around(circles_list)) # todo: controversial; circles may have fractional centers, this rounds them off
+    if circles is None:
+        circles_list = np.array([])
+    return circles_list
 
 def overlay_circles(img:np.ndarray, circles:np.ndarray) -> np.ndarray:
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
@@ -74,6 +76,8 @@ def sort_topleft_to_bottomright(coords:np.ndarray, precision=-1) -> np.ndarray:
     # Use the sorted indices to reorder the original coordinates
     sorted_coords = coords[sorted_indices]
     return sorted_coords
+
+
 
 def test_sort_topleft_to_bottomright():
     # Define the coordinates with a little noise

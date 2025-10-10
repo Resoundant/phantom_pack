@@ -1,11 +1,16 @@
 import numpy as np 
 import cv2
+import pydicom
+import random
+from fw import FWSeries, FWImagePair
+import phantom_pack as pp
+import plot_utils
 
 SPHERE_RADIUS_MM = 100
 SPHERE_VIAL_RADIUS_MM = 11
 SPHERE_VIAL_SEP_MM = int(3.5*SPHERE_VIAL_RADIUS_MM)
-IMG_RESOLUTION = 256
-IMG_FOV_MM = 280
+IMG_RESOLUTION:int = 256
+IMG_FOV_MM:float = 350
 
 def simulate_sphere(randomize=False) -> tuple[np.ndarray, np.ndarray]:
     ''' 
@@ -60,6 +65,56 @@ def simulate_sphere(randomize=False) -> tuple[np.ndarray, np.ndarray]:
             cv2.circle(pdff,  (x, y), circle_radius+wall_thick, 0, wall_thick)
             cv2.circle(water, (x, y), circle_radius+wall_thick, 0, wall_thick)
     return pdff, water
+
+def simulate_phantom_pack()-> FWSeries:
+    fw_series = FWSeries(1)
+    fw_series.series_description_pdff = "PDFF TEST SERIES"
+    fw_series.series_description_water = "WATER TEST SERIES"
+    fw_series.series_number_water = 2
+    total_images = 40
+    pack_start_image = 10
+    pack_image_count = 20
+    slice_thickness = 5
+    pixel_spacing = IMG_FOV_MM/IMG_RESOLUTION
+
+    for i in range(total_images):
+        pdff_img = np.empty((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
+        water_img = np.empty((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
+        if i >= pack_start_image and i < pack_start_image + pack_image_count:
+            sim_pack_circles(pdff_img, water_img, pixel_spacing)
+        fw_pair = FWImagePair(pdff_img, water_img, pixel_spacing, location_full=i*slice_thickness)
+        fw_series.image_pairs.append(fw_pair)
+    return fw_series
+
+def sim_pack_circles(pdff_img:np.ndarray, water_img:np.ndarray, pixel_spacing):
+    # Valid aligned group (all values are pixels)
+    img_size, _ = pdff_img.shape
+    # all values in px
+    radius = pp.PP_CONST['VIAL_RADIUS_MM']/pixel_spacing 
+    spacing = pp.PP_CONST['VIAL_SEP_MM']/pixel_spacing
+    base_x, base_y = int(img_size/2-2*spacing), int(3*img_size/4)
+    radius_range_px = 1
+    loc_range_px = 1
+    linear_skew = 0 # random.uniform(-5, 5)
+    circle_data = []
+    pdff_vals = [40, 30, 20, 10, 0]
+    for i in range(len(pdff_vals)):
+        circle_data.extend([
+            (
+            int(base_x + i * spacing + random.uniform(-loc_range_px, loc_range_px)), # x loc
+            int(base_y + random.uniform(-loc_range_px, loc_range_px) + (i * spacing * np.tan(np.deg2rad(linear_skew)))), # y loc
+            int(radius + random.uniform(-radius_range_px, radius_range_px)), # radius
+            pdff_vals[i] # pdff %
+            ),
+        ])
+    
+    # fill vials
+    for x,y,r,pc in circle_data:
+        cv2.circle(pdff_img,  (x, y), r, pc    , -1)
+        cv2.circle(water_img, (x, y), r, 100-pc, -1)
+    # plot_utils.display_image(pdff_img, "PDFF")
+    # plot_utils.display_image(water_img, "Water")
+    return 
 
 def add_gaussian_noise(image:np.ndarray, mean=0, std_dev=10):
     """

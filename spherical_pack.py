@@ -1,5 +1,5 @@
 import pack_simulators as ps
-import circle_utils as cu
+import circle_finder as cu
 import masking 
 
 if __name__ == "__main__":

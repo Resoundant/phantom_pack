@@ -1,16 +1,18 @@
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from phantom_pack import find_circles
+import plot_utils
+from pack_simulators import simulate_phantom_pack
+from phantom_pack import find_packs_in_images, composite_statistics
+
 
 def create_test_image() -> np.ndarray:
     height = 256
     width = 256
-    channels = 1
-    radius = 9
-    spacing = 4*radius
-    x_offset = radius*2
-    y_offset = radius*2
+    channels = 1 # color channels (1 = grayscale)
+    radius = 9 #px
+    spacing = 4*radius #px
+    x_offset = radius*2 #px
+    y_offset = radius*2 #px
     img = np.zeros((height, width , channels), dtype=np.uint8)
     for i in range(7):
         for j in range(7):
@@ -21,10 +23,24 @@ def create_test_image() -> np.ndarray:
     return img
 
 if __name__ == "__main__":
-    test_image = create_test_image()
+    #test_image = create_test_image()
     # cv2.imshow("Test Image", test_image)
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
-    circles = find_circles(test_image, minDist=1, minRadius=1, maxRadius=20)
+    fw_series = simulate_phantom_pack()
+
+    # display a few images to be sure
+    display_slice = len(fw_series.image_pairs) // 2
+    # plot_utils.display_image(fw_series.image_pairs[display_slice].pdff_img, "PDFF, midpoint")
+    # plot_utils.display_image(fw_series.image_pairs[display_slice].water_img, "Water, midpoint")
+
+    find_packs_in_images(fw_series)
+    fw_series.create_rois(5)
+    fw_series.pack_midpoint = fw_series.find_pack_midpoint()
+    span_mm = 50
+    start_slice_loc = fw_series.pack_midpoint - span_mm/2
+    end_slice_loc   = fw_series.pack_midpoint + span_mm/2
+    dict_results = composite_statistics(fw_series, start_slice_loc, end_slice_loc)
+
     x=1
