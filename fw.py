@@ -15,6 +15,8 @@ class FWSeries:
         self.series_description_water = ""
         self.image_pairs:list[FWImagePair] = []
         self.pack_midpoint:float = -999.9
+        self.stats_min_loc = -999.9
+        self.stats_max_loc = -999.9
     
     def find_pack_midpoint(self) -> float:
         midpoint = find_midpoint([x.location_full for x in self.image_pairs if x.has_circles()])
@@ -47,6 +49,10 @@ class FWSeries:
         all_locs = [x.location_full for x in self.image_pairs]
         pack_locs = [x.location_full for x in self.image_pairs if x.has_circles()]
         if len(pack_locs) == 0:
+            self.pack_first_slice_loc = None
+            self.pack_last_slice_loc = None
+            self.pack_first_slice = None
+            self.pack_last_slice = None
             return
         self.pack_first_slice_loc = min(pack_locs)
         self.pack_last_slice_loc = max(pack_locs)

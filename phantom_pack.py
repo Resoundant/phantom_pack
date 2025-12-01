@@ -14,6 +14,8 @@ from circle_grouping import find_circle_groups
 from circle_finder import circle_finder_water, circles_to_rois
 from fw import FWSeries, FWImagePair
 from plot_utils import display_image, display_image_with_circles
+from pp_config import PP_CONST
+from img_utils import create_hepplus_img
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,29 +30,6 @@ CX = 0
 CY = 1
 CR = 2
 
-# Phantom pack and analysis parameters
-# PP_CONST = {
-#     "OUTPUT_DIR" : "phantompack_results",
-#     "VIAL_RADIUS_MM" : 19/2,      # radius of the phantom pack vials
-#     "VIAL_SEP_MM" : 31,           # 20px*1.56mm/px
-#     "VIAL_SEP_TOLERANCE_MM" : 6,
-#     "ROI_RADIUS_MM" : 13/2,       # radius of the phantom pack ROI
-#     "RADIUS_TOLERANCE_MM" : 4,    # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
-#     "VERT_ALIGN_TOLERANCE_MM" : 7,
-#     "ANALYSIS_SPAN_MM" : 20,      # analyze a range of images centered at the midpoint
-#     "ANALYSIS_CENTER_MM" : None,  # center span at a specific location, None to use midpoint
-# }
-PP_CONST = {
-    "OUTPUT_DIR" : "phantompack_results",
-    "VIAL_RADIUS_MM" : 19/2,      # radius of the phantom pack vials
-    "VIAL_SEP_MM" : 31,           # 20px*1.56mm/px
-    "VIAL_SEP_TOLERANCE_MM" : 3,
-    "ROI_RADIUS_MM" : 13/2,       # radius of the phantom pack ROI
-    "RADIUS_TOLERANCE_MM" : 7,    # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
-    "VERT_ALIGN_TOLERANCE_MM" : 7,
-    "ANALYSIS_SPAN_MM" : 20,      # analyze a range of images centered at the midpoint
-    "ANALYSIS_CENTER_MM" : None,  # center span at a specific location, None to use midpoint
-}
 
 
 TIMESTAMP = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
@@ -76,7 +55,7 @@ DICOM_TAG_LIST = [
 
 
 def phantom_pack(
-        directory_path:str,
+        labeled_dicoms:list[pydicom.Dataset],
         vial_radius = PP_CONST["VIAL_RADIUS_MM"],
         radius_tolerance = PP_CONST["RADIUS_TOLERANCE_MM"], 
         vert_align_tol = PP_CONST["VERT_ALIGN_TOLERANCE_MM"],
@@ -88,63 +67,75 @@ def phantom_pack(
     return a list of dictionaries containing results for each pdff/water pair
     '''
 
+    if labeled_dicoms == None or len(labeled_dicoms) == 0:
+        print("[phantom_pack] ERROR: Input data is empty")
+        return {} 
+
     # prepare output directory
     output_dir = os.path.join(directory_path, PP_CONST["OUTPUT_DIR"])
     os.makedirs(output_dir, exist_ok=True)
-    #todo: make sure directory exist and is writeable
-
-    # load dicoms in directory
-    logger.info("Loading files...")
-    all_dicoms = load_dicoms(directory_path, turbo_mode=True)
-
-    # label each dicom dataset according to identifying_labels
-    label_datasets(all_dicoms)
+    #TODO: make sure directory exist and is writeable
 
     # find pdff/water pairs; img_packs = [[pair1],[pair2],...]
-    fw_series_paired = find_fw_pairs(all_dicoms) #todo: rename variables to clarify
+    fw_series_paired = find_fw_pairs(labeled_dicoms) #todo: rename variables to clarify
     print_paired_summary(fw_series_paired, directory_path)
 
     # save summary of loaded data: each pdff/water series and description
     log_seriesdata_to_file(output_dir, fw_series_paired)
     # save summary of data loaded but unknown (no matching label)
-    log_unknowns_to_file(output_dir, all_dicoms)
+    log_unknowns_to_file(output_dir, labeled_dicoms)
 
     # loop over series pairs to find phantom packs
-    for fw_serie in fw_series_paired:
-        if len(fw_serie.image_pairs) == 0: # no data
+    for fw in fw_series_paired:
+        if len(fw.image_pairs) == 0: # no data
             continue
         logger.info("")
-        logger.info(f"Processing PDFF series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
-        logger.info(f"     with WATER series {fw_serie.series_number_water} {fw_serie.series_description_water}")
+        logger.info(f"Processing PDFF series {fw.series_number_pdff} {fw.series_description_pdff}")
+        logger.info(f"     with WATER series {fw.series_number_water} {fw.series_description_water}")
 
         find_packs_in_images(
-            fw_serie,
+            fw,
             vial_radius=vial_radius,
             radius_tolerance=radius_tolerance,
             vert_align_tol=vert_align_tol
         )
-        fw_serie.sort_data_by_sliceloc()
-        fw_serie.create_rois(roi_radius=roi_radius) # put ROIs from all found circles
+        fw.sort_data_by_sliceloc()
+        fw.create_rois(roi_radius=roi_radius) # put ROIs from all found circles
 
         # COMPUTE STATISTICS
-        fw_serie.pack_midpoint = fw_serie.find_pack_midpoint() #set fw_series.pack_midpoint
-        fw_serie.find_pack_locations() # set first and last locations and indeces of pack
-        if fw_serie.pack_midpoint is None:
-            logger.warning(f"No pack midpoint found for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+        pack_midpoint = fw.find_pack_midpoint() #set fw_series.pack_midpoint
+        fw.find_pack_locations() # set first and last locations and indeces of pack
+        if fw.pack_midpoint is None:
+            logger.warning(f"No pack midpoint found for series {fw.series_number_pdff} {fw.series_description_pdff}")
             continue
-        results = compute_and_save_results(span_mm, output_dir, fw_serie)
+
+        try:
+            fw.stats_min_loc = fw.pack_midpoint-span_mm/2
+            fw.stats_max_loc = fw.pack_midpoint+span_mm/2
+        except: 
+            logger.warning("ERROR computing min and max slice location")
+            return {}
+        
+
+
+        results = compute_and_save_results(fw, span_mm, output_dir)
     return results
 
-def compute_and_save_results(span_mm, output_dir, fw_serie:FWSeries) -> dict:
+
+def compute_and_save_results(fw:FWSeries, span_mm, output_dir) -> dict:
     # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
     # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
     # partial data
+
+    
     try:
-        stats_min_loc = fw_serie.pack_midpoint-span_mm/2
-        stats_max_loc = fw_serie.pack_midpoint+span_mm/2
-        composite_results = composite_statistics(fw_serie, stats_min_loc, stats_max_loc)
+        composite_results = composite_statistics(fw, fw.stats_min_loc, fw.stats_max_loc)
     except:
-        logger.warning(f"Error computing comsposite statistics for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+        logger.warning(f"ERROR computing comsposite statistics for series {fw.series_number_pdff} {fw.series_description_pdff}")
+ 
+    cropped_arr = create_hepplus_img(fw)
+    create_hepplus_img(cropped_arr)
+    x=1
 
     # DECOUPLE AND RESTORE THIS
     # try:
@@ -162,7 +153,7 @@ def compute_and_save_results(span_mm, output_dir, fw_serie:FWSeries) -> dict:
 
     try:
         # save plots of slice values
-        plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
+        plot_slice_values(fw, vert_lines=[fw.stats_min_loc, fw.stats_max_loc], directory_path=output_dir)
         results = composite_results # RESTORE ME| image_info
 
         if results:
@@ -184,7 +175,7 @@ def compute_and_save_results(span_mm, output_dir, fw_serie:FWSeries) -> dict:
         #         json.dump(trace_data, file, indent=4)
         return results
     except:
-        logger.warning(f"Error computing per-slice for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+        logger.warning(f"Error computing per-slice for series {fw.series_number_pdff} {fw_serie.series_description_pdff}")
         return {}
 
 def log_unknowns_to_file(output_dir, all_dicoms):
@@ -321,17 +312,27 @@ def count_rois_in_images(fw_series:FWSeries) -> list:
     return num_rois_in_images
 
 def rois_are_aligned(fw_series:FWSeries) -> bool:
-    # check that all of the rois are aligned across slices, by making sure their centers are withing the rois radius
-    # so that we don't mix values from different ROIs
-    for i in range(len(fw_series.image_pairs)-1):
-        if fw_series.image_pairs[i].has_rois() and fw_series.image_pairs[i+1].has_rois():
-            for j in range(len(fw_series.image_pairs[i].rois)-1):
-                x_sep = abs(float(fw_series.image_pairs[i].rois[j][CX]) - float(fw_series.image_pairs[i+1].rois[j][CX]))
-                y_sep = abs(float(fw_series.image_pairs[i].rois[j][CY]) - float(fw_series.image_pairs[i+1].rois[j][CY]))
-                if x_sep > fw_series.image_pairs[i].rois[j][CR]:
-                    logger.warning("WARNING: ROIs not aligned across slices!")
-                if y_sep > fw_series.image_pairs[i].rois[j][CR]:
-                    logger.warning("WARNING: ROIs not aligned across slices!")
+    """Return True when ROI centers stay within their radius across slices."""
+    prev_rois = None
+    for img_pair in fw_series.image_pairs:
+        if not img_pair.has_rois():
+            continue
+        current_rois = sorted(img_pair.rois, key=lambda r: r[CX])
+        if prev_rois is None: # first loop
+            prev_rois = current_rois
+            continue
+        if len(prev_rois) != len(current_rois):
+            logger.warning("WARNING: ROIs not aligned across slices (different ROI counts)")
+            return False
+        for roi_idx, roi in enumerate(current_rois):
+            x_sep = abs(float(prev_rois[roi_idx][CX]) - float(roi[CX]))
+            y_sep = abs(float(prev_rois[roi_idx][CY]) - float(roi[CY]))
+            allowed_radius = min(prev_rois[roi_idx][CR], roi[CR])
+            if (x_sep * x_sep + y_sep * y_sep) > (allowed_radius * allowed_radius):
+                logger.warning(f"WARNING: ROIs not aligned across slices at index {roi_idx}")
+                return False
+        prev_rois = current_rois
+    return True
 
 
 def renormalize_stats(results_dict:dict) -> dict:
@@ -599,59 +600,59 @@ def plot_array(img_pack_data:list[dict], dest_filepath:str=None,display_image=Fa
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_image=False):
-    """Plot PDFF and water images with ROIs using OpenCV."""
-    cols = 2
-    rows = np.uint32(len(image_pairs))
-    # Create a blank canvas to hold the images
-    cimg_setup = cv2.cvtColor(np.uint8(image_pairs[0].water.pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
-    height, width, channels = cimg_setup.shape
+# def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_image=False):
+#     """Plot PDFF and water images with ROIs using OpenCV."""
+#     cols = 2
+#     rows = np.uint32(len(image_pairs))
+#     # Create a blank canvas to hold the images
+#     cimg_setup = cv2.cvtColor(np.uint8(image_pairs[0].water.pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
+#     height, width, channels = cimg_setup.shape
 
-    canvas = np.zeros((height * rows, width * cols, channels), dtype=np.uint8)
-    for i, img_pair in enumerate(image_pairs):
-        cimg_water = np.uint8(cv2.normalize(img_pair.water.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
-        cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
-        cimg_pdff = np.uint8(cv2.normalize(img_pair.pdff.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
-        cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
-        if img_pair.has_circles():
-            np_circles = np.uint16(np.around(img_pair.circles))
-            for c in np_circles:
-                cv2.circle(cimg_water,(c[0],c[1]),c[2],(0,0,255),1)             # draw the outer circle
-        if img_pair.has_rois():
-            np_rois = np.uint16(np.around(img_pair.rois))
-            mystats = slice_stats(img_pair)
-            for j, c in enumerate(np_rois):
-                cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
-                mystr = f"{mystats['pdff_means'][j]:.1f}"
-                text_size, _ = cv2.getTextSize(mystr, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
-                text_w, text_h = text_size
-                mypt = (c[0]-3*c[2],c[1]+4*c[2]+text_h) # default/odd, plot below vial
-                if (j % 2 == 0): #even, plot above  vial
-                    mypt = (c[0]-3*c[2],c[1]-4*c[2])
+#     canvas = np.zeros((height * rows, width * cols, channels), dtype=np.uint8)
+#     for i, img_pair in enumerate(image_pairs):
+#         cimg_water = np.uint8(cv2.normalize(img_pair.water.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
+#         cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
+#         cimg_pdff = np.uint8(cv2.normalize(img_pair.pdff.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
+#         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
+#         if img_pair.has_circles():
+#             np_circles = np.uint16(np.around(img_pair.circles))
+#             for c in np_circles:
+#                 cv2.circle(cimg_water,(c[0],c[1]),c[2],(0,0,255),1)             # draw the outer circle
+#         if img_pair.has_rois():
+#             np_rois = np.uint16(np.around(img_pair.rois))
+#             mystats = slice_stats(img_pair)
+#             for j, c in enumerate(np_rois):
+#                 cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
+#                 mystr = f"{mystats['pdff_means'][j]:.1f}"
+#                 text_size, _ = cv2.getTextSize(mystr, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
+#                 text_w, text_h = text_size
+#                 mypt = (c[0]-3*c[2],c[1]+4*c[2]+text_h) # default/odd, plot below vial
+#                 if (j % 2 == 0): #even, plot above  vial
+#                     mypt = (c[0]-3*c[2],c[1]-4*c[2])
 
-                cv2.rectangle(cimg_pdff, (mypt[0], mypt[1]), (mypt[0] + text_w, mypt[1] - text_h), (0,0,0), -1)
-                cv2.putText(cimg_pdff, mystr, mypt, cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,0), 1)
-        # plot slice location on bottom of pdff image
-        loc_nodecimals = f"{float(img_pair.pdff.get('SliceLocation')):.1f}"
-        loc_str = f"LOC: {loc_nodecimals}"
-        loc_fontscale = 0.6
-        loc_size, _ = cv2.getTextSize(loc_str, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, 1)
-        loc_w, loc_h = loc_size
-        loc_pt = (int(width/2 - loc_w/2), 2*loc_h)
-        cv2.rectangle(cimg_pdff, loc_pt, (loc_pt[0] + loc_w, loc_pt[1] - loc_h), (0,0,0), -1)
-        cv2.putText(cimg_pdff, loc_str, loc_pt, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, (255,255,0), 1)
-        # Place each image on the canvas
-        canvas[i * height:(i + 1) * height,     0:width  ] = cimg_water
-        canvas[i * height:(i + 1) * height, width:width*2] = cimg_pdff
+#                 cv2.rectangle(cimg_pdff, (mypt[0], mypt[1]), (mypt[0] + text_w, mypt[1] - text_h), (0,0,0), -1)
+#                 cv2.putText(cimg_pdff, mystr, mypt, cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,0), 1)
+#         # plot slice location on bottom of pdff image
+#         loc_nodecimals = f"{float(img_pair.pdff.get('SliceLocation')):.1f}"
+#         loc_str = f"LOC: {loc_nodecimals}"
+#         loc_fontscale = 0.6
+#         loc_size, _ = cv2.getTextSize(loc_str, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, 1)
+#         loc_w, loc_h = loc_size
+#         loc_pt = (int(width/2 - loc_w/2), 2*loc_h)
+#         cv2.rectangle(cimg_pdff, loc_pt, (loc_pt[0] + loc_w, loc_pt[1] - loc_h), (0,0,0), -1)
+#         cv2.putText(cimg_pdff, loc_str, loc_pt, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, (255,255,0), 1)
+#         # Place each image on the canvas
+#         canvas[i * height:(i + 1) * height,     0:width  ] = cimg_water
+#         canvas[i * height:(i + 1) * height, width:width*2] = cimg_pdff
 
-    # save image
-    if (dest_filepath != None):
-        cv2.imwrite(dest_filepath, canvas)
+#     # save image
+#     if (dest_filepath != None):
+#         cv2.imwrite(dest_filepath, canvas)
 
-    if (display_image):
-        cv2.imshow("Images", canvas)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+#     if (display_image):
+#         cv2.imshow("Images", canvas)
+#         cv2.waitKey(0)
+#         cv2.destroyAllWindows()
 
 def find_closest_value(mylist:list, target_value):
     """Finds the number in a list closest to a given target value."""
@@ -724,6 +725,8 @@ def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
     plt.savefig(os.path.join(directory_path, filename))
     plt.close()
 
+
+
 def print_paired_summary(fw_series_paired, directory_path):
     if len(fw_series_paired) == 0:
         logger.warning(f"No PDFF/Water data found in {directory_path}")
@@ -748,6 +751,20 @@ def remove_outliers_mad(image, threshold=3.5):
     return np.where(mask, image, 0)  # replace outliers with 0
 
 
+def load_and_label(directory_path) -> list[pydicom.Dataset]:
+    '''
+    load all files in directory and apply labels
+    '''
+    # load dicoms in directory
+    logger.info("Loading files...")
+    all_dicoms = load_dicoms(directory_path, turbo_mode=True)
+
+    # label each dicom dataset according to identifying_labels
+    label_datasets(all_dicoms)
+
+    return all_dicoms
+
+
 if __name__ == "__main__":
     directory_path = sys.argv[1]
     if not os.path.isdir(directory_path):
@@ -756,9 +773,10 @@ if __name__ == "__main__":
     logfile = os.path.join(directory_path, "phantom_pack.log")
     logging.basicConfig(filename=logfile, level=logging.INFO)
     logger.info(f"Processing {directory_path}")
-    results = phantom_pack(directory_path)
+    labeled_dicoms = load_and_label(directory_path)
+    results = phantom_pack(labeled_dicoms)
 
-
+    x=1
     # testimg_path = r'C:\testdata\PhantomPack\PQ024\SER00090\IMG00019.dcm'
     # directory_path = os.path.dirname(testimg_path)
     # ds = pydicom.dcmread(testimg_path)
