@@ -38,9 +38,9 @@ if __name__ == "__main__":
     find_packs_in_images(fw_series)
     fw_series.create_rois(5)
     fw_series.pack_midpoint = fw_series.find_pack_midpoint()
-    span_mm = 50
-    start_slice_loc = fw_series.pack_midpoint - span_mm/2
-    end_slice_loc   = fw_series.pack_midpoint + span_mm/2
-    dict_results = composite_statistics(fw_series, start_slice_loc, end_slice_loc)
+    span_mm = 15
+    fw_series.stats_min_loc = fw_series.pack_midpoint - span_mm/2
+    fw_series.stats_max_loc   = fw_series.pack_midpoint + span_mm/2
+    dict_results = composite_statistics(fw_series, fw_series.stats_min_loc, fw_series.stats_max_loc)
 
     x=1

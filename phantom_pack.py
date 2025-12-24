@@ -134,7 +134,6 @@ def compute_and_save_results(fw:FWSeries, span_mm, output_dir) -> dict:
         logger.warning(f"ERROR computing comsposite statistics for series {fw.series_number_pdff} {fw.series_description_pdff}")
  
     cropped_arr = create_hepplus_img(fw)
-    create_hepplus_img(cropped_arr)
     x=1
 
     # DECOUPLE AND RESTORE THIS
@@ -287,17 +286,31 @@ def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> di
             vals = get_values_in_roi(img_pair.pdff_img, roi)
             masked_values[roi_index].extend(vals)
 
-    # todo: rigid, doesn't handle situations where rois have different number of pixels
-    # cast into np.array to take mean of each row, where a row contains the values for rois across slices
-    np_arr = np.array(masked_values)
-    # calculate mean across slices for a given roi
-    results_dict = {}
-    results_dict['means']    = np.mean(np_arr, axis=1).tolist()
-    results_dict['stddevs']  = np.std(np_arr, axis=1).tolist()
-    results_dict['medians']  = np.median(np_arr, axis=1).tolist()
-    results_dict['mins']     = np.min(np_arr, axis=1).tolist()
-    results_dict['maxs']     = np.max(np_arr, axis=1).tolist()
-    results_dict['samples']  = [np_arr.shape[1]]*5
+    # calculate stats per ROI list to handle variable pixel counts
+    results_dict = {
+        "means": [],
+        "stddevs": [],
+        "medians": [],
+        "mins": [],
+        "maxs": [],
+        "samples": [],
+    }
+    for roi_vals in masked_values:
+        if not roi_vals:
+            results_dict["means"].append(float("nan"))
+            results_dict["stddevs"].append(float("nan"))
+            results_dict["medians"].append(float("nan"))
+            results_dict["mins"].append(float("nan"))
+            results_dict["maxs"].append(float("nan"))
+            results_dict["samples"].append(0)
+            continue
+        np_vals = np.asarray(roi_vals)
+        results_dict["means"].append(float(np.mean(np_vals)))
+        results_dict["stddevs"].append(float(np.std(np_vals)))
+        results_dict["medians"].append(float(np.median(np_vals)))
+        results_dict["mins"].append(float(np.min(np_vals)))
+        results_dict["maxs"].append(float(np.max(np_vals)))
+        results_dict["samples"].append(int(np_vals.size))
     results_dict = renormalize_stats(results_dict)
     return results_dict
 
@@ -600,50 +613,6 @@ def plot_array(img_pack_data:list[dict], dest_filepath:str=None,display_image=Fa
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
-# def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_image=False):
-#     """Plot PDFF and water images with ROIs using OpenCV."""
-#     cols = 2
-#     rows = np.uint32(len(image_pairs))
-#     # Create a blank canvas to hold the images
-#     cimg_setup = cv2.cvtColor(np.uint8(image_pairs[0].water.pixel_array), cv2.COLOR_GRAY2BGR) #bug: assumes all images same resolution
-#     height, width, channels = cimg_setup.shape
-
-#     canvas = np.zeros((height * rows, width * cols, channels), dtype=np.uint8)
-#     for i, img_pair in enumerate(image_pairs):
-#         cimg_water = np.uint8(cv2.normalize(img_pair.water.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
-#         cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
-#         cimg_pdff = np.uint8(cv2.normalize(img_pair.pdff.pixel_array, None, 0, 255, cv2.NORM_MINMAX))
-#         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
-#         if img_pair.has_circles():
-#             np_circles = np.uint16(np.around(img_pair.circles))
-#             for c in np_circles:
-#                 cv2.circle(cimg_water,(c[0],c[1]),c[2],(0,0,255),1)             # draw the outer circle
-#         if img_pair.has_rois():
-#             np_rois = np.uint16(np.around(img_pair.rois))
-#             mystats = slice_stats(img_pair)
-#             for j, c in enumerate(np_rois):
-#                 cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
-#                 mystr = f"{mystats['pdff_means'][j]:.1f}"
-#                 text_size, _ = cv2.getTextSize(mystr, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
-#                 text_w, text_h = text_size
-#                 mypt = (c[0]-3*c[2],c[1]+4*c[2]+text_h) # default/odd, plot below vial
-#                 if (j % 2 == 0): #even, plot above  vial
-#                     mypt = (c[0]-3*c[2],c[1]-4*c[2])
-
-#                 cv2.rectangle(cimg_pdff, (mypt[0], mypt[1]), (mypt[0] + text_w, mypt[1] - text_h), (0,0,0), -1)
-#                 cv2.putText(cimg_pdff, mystr, mypt, cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,0), 1)
-#         # plot slice location on bottom of pdff image
-#         loc_nodecimals = f"{float(img_pair.pdff.get('SliceLocation')):.1f}"
-#         loc_str = f"LOC: {loc_nodecimals}"
-#         loc_fontscale = 0.6
-#         loc_size, _ = cv2.getTextSize(loc_str, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, 1)
-#         loc_w, loc_h = loc_size
-#         loc_pt = (int(width/2 - loc_w/2), 2*loc_h)
-#         cv2.rectangle(cimg_pdff, loc_pt, (loc_pt[0] + loc_w, loc_pt[1] - loc_h), (0,0,0), -1)
-#         cv2.putText(cimg_pdff, loc_str, loc_pt, cv2.FONT_HERSHEY_SIMPLEX, loc_fontscale, (255,255,0), 1)
-#         # Place each image on the canvas
-#         canvas[i * height:(i + 1) * height,     0:width  ] = cimg_water
-#         canvas[i * height:(i + 1) * height, width:width*2] = cimg_pdff
 
 #     # save image
 #     if (dest_filepath != None):
@@ -778,7 +747,7 @@ if __name__ == "__main__":
 
     x=1
     # testimg_path = r'C:\testdata\PhantomPack\PQ024\SER00090\IMG00019.dcm'
-    # directory_path = os.path.dirname(testimg_path)
+    # directory_path = os.path.dirname(testimg_path)4
     # ds = pydicom.dcmread(testimg_path)
     # circles_in_pdff(ds, min_radius=1, max_radius=60, min_sep=1)
 

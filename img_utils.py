@@ -1,3 +1,4 @@
+import os
 import cv2
 import numpy as np
 from fw import FWSeries, FWImagePair
@@ -46,17 +47,22 @@ def create_hepplus_img(fw:FWSeries) -> np.ndarray:
     image_pairs_in_span = fw.img_pairs_in_span(min_loc=fw.stats_min_loc, max_loc=fw.stats_max_loc)
     pack_arr_img = cropped_pack_array(image_pairs_in_span)
     plot_utils.display_cimg(pack_arr_img)
+    save_img_totemp(fw, pack_arr_img)
     return pack_arr_img
 
 def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
-    cols = 2
+    # TODO: make the tiled collage of phantom packs first,
+    # so that it can be normalized once and evently.
+    # Make the circles on a tranparent bg, crop and overlay them.
+    cols = 3
     rows = len(img_pairs)
 
     # find bounding box
     all_circles = [c.circles for c in img_pairs if c.has_circles()]
     if not all_circles:
         raise ValueError("No circles found to build a bounding box")
-    bbox = find_pack_bounding_box(all_circles)
+    bbox = find_pack_bounding_box(all_circles, padding=2)
+    # get input image dimensions to prepare for crop
     cimg_setup = cv2.cvtColor(np.uint8(img_pairs[0].water_img), cv2.COLOR_GRAY2BGR) 
     img_h, img_w, channels = cimg_setup.shape
     # be sure crop areas don't go outside iamge
@@ -68,6 +74,8 @@ def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
     bbox_h = y2-y1
 
     canvas = np.zeros((bbox_h * rows, bbox_w * cols, channels), dtype=np.uint8)
+    watr_col_canvas = np.zeros((bbox_h * rows, bbox_w, channels), dtype=np.uint8)
+    pdff_col_canvas = np.zeros((bbox_h * rows, bbox_w, channels), dtype=np.uint8)
     for i, img_pair in enumerate(img_pairs):
         watr_copy = deepcopy(img_pair.water_img)
         pdff_copy = deepcopy(img_pair.pdff_img)
@@ -85,11 +93,49 @@ def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
             np_rois = np.uint16(np.around(img_pair.rois))
             for j, c in enumerate(np_rois):
                 cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
+        # crop out phantom pack and slot into tile location.
         cropped_watr = cimg_watr[y1:y2, x1:x2]
         cropped_pdff = cimg_pdff[y1:y2, x1:x2]
-        canvas[i * bbox_h:(i + 1) * bbox_h,      0:bbox_w  ] = cropped_watr
-        canvas[i * bbox_h:(i + 1) * bbox_h, bbox_w:bbox_w*2] = cropped_pdff
+        row_text = f"{float(img_pair.location_full):.1f}mm"
+        label_box = put_text_in_box(np.zeros((y2-y1, x2-x1, channels), dtype=np.uint8), row_text)
+        # row_position = i * bbox_h:(i + 1) * bbox_h
+        canvas[i * bbox_h:(i + 1) * bbox_h,        0:bbox_w  ] = cropped_watr
+        canvas[i * bbox_h:(i + 1) * bbox_h,   bbox_w:bbox_w*2] = cropped_pdff
+        canvas[i * bbox_h:(i + 1) * bbox_h, 2*bbox_w:bbox_w*3] = label_box
     return canvas
+
+
+def put_text_in_box(img, text, 
+                    font=cv2.FONT_HERSHEY_SIMPLEX,
+                    max_font_scale=5.0, min_font_scale=0.2,
+                    color=(255, 255, 255), thickness=1, margin=4):
+    """
+    Draw text centered in the image, auto-scaling to fit within the image bounds minus margin.
+    Modifies img in place and returns it.
+    """
+    h, w = img.shape[:2]
+    box_w, box_h = w - 2 * margin, h - 2 * margin
+    if box_w <= 0 or box_h <= 0:
+        return img  # image too small
+
+    lo, hi = min_font_scale, max_font_scale
+    best_scale = min_font_scale
+    while hi - lo > 0.01:
+        mid = (lo + hi) / 2.0
+        (tw, th), _ = cv2.getTextSize(text, font, mid, thickness)
+        if tw <= box_w and th <= box_h:
+            best_scale = mid
+            lo = mid
+        else:
+            hi = mid
+
+    (tw, th), baseline = cv2.getTextSize(text, font, best_scale, thickness)
+    x = margin # + (box_w - tw) // 2 # left justify
+    y = margin + (box_h + th) // 2  # baseline position
+
+    cv2.putText(img, text, (int(x), int(y)), font, best_scale, color, thickness, lineType=cv2.LINE_AA)
+    return img
+
 
 def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_image=False):
     """Plot PDFF and water images with ROIs using OpenCV."""
@@ -145,6 +191,13 @@ def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_im
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
+def save_img_totemp(fw:FWSeries, img):
+    filepath = os.path.join(r'C:\temp\images', f'phantom_pack_{fw.series_number}.jpg')
+    save_img(img, filepath)
+
+def save_img(img, filepath):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    cv2.imwrite(filepath, img)
 
 
 def test_bounding_box():
