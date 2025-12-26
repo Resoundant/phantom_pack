@@ -3,10 +3,19 @@ import copy
 import numpy as np
 import cv2
 import pydicom
+import os
+import json
+# from img_utils import plot_results
 from pp_config import DICOM_TAG_LIST
 
 import logging
 logger = logging.getLogger(__name__)
+
+
+# circle index helpers
+CX = 0
+CY = 1
+CR = 2
 
 
 
@@ -95,57 +104,54 @@ class FWSeries:
     def metadata(self) -> dict:
         return extract_dicom_tags(self.pdff_metadata)
 
-    def compute_and_save_results(self, span_mm, output_dir, fw_serie) -> dict:
+    def compute_stats_and_metadata(self, span_mm, fw_serie):
+        stats_min_loc = fw_serie.pack_midpoint - span_mm / 2
+        stats_max_loc = fw_serie.pack_midpoint + span_mm / 2
+        composite_results = self.composite_statistics(stats_min_loc, stats_max_loc)
+        image_info = self.metadata()
+        return stats_min_loc, stats_max_loc, composite_results, image_info
+
+    def save_plot_images(self, output_dir, image_info, stats_min_loc, stats_max_loc):
+        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+        # TODO restore
+        # plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
+        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+        image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
+        # plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+
+    def save_results_json(self, output_dir, results):
+        if results:
+            file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
+            with open(file_path, 'w') as file:
+                json.dump(results, file, indent=4)
+            logger.info(f"  JSON data saved to {file_path}")
+
+    def compute_and_save_results(self, span_mm, output_dir) -> dict:
         # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
         # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
         # partial data
         stats_min_loc = 0
         stats_max_loc = 0
+        composite_results = {}
+        image_info = {}
         try:
-            stats_min_loc = fw_serie.pack_midpoint-span_mm/2
-            stats_max_loc = fw_serie.pack_midpoint+span_mm/2
-            composite_results = self.composite_statistics(stats_min_loc, stats_max_loc)
+            stats_min_loc, stats_max_loc, composite_results, image_info = self.compute_stats_and_metadata(span_mm)
         except:
-            logger.warning(f"Error computing comsposite statistics for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+            logger.warning(f"Error computing comsposite statistics for series {self.series_number_pdff} {self.series_description_pdff}")
 
         try:
-            # collect info about dataset
-            image_info = self.metadata()
-            # save canvas of all pdff water pairs with circles
-            array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
-            plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-            # save image of just the selected slices
-            array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-            image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
-            plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+            self.save_plot_images(output_dir, image_info, stats_min_loc, stats_max_loc)
         except:
-            logger.warning(f"Error saving plots for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+            logger.warning(f"Error saving plots for series {self.series_number_pdff} {self.series_description_pdff}")
 
         try:
             # save plots of slice values
-            plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
+            # plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
             results = composite_results | image_info
-
-            if results:
-                file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
-                with open(file_path, 'w') as file:
-                    json.dump(results, file, indent=4)
-                logger.info(f"  JSON data saved to {file_path}")
-            if MATCH_TRACE:
-                trace_data = []
-                for imgs in fw_serie.image_pairs:
-                    trace_data.append({
-                        "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
-                        "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
-                        "pdff_filename" : f"Series {imgs.pdff.filename}",
-                        "water_filename" : f"Series {imgs.water.filename}",
-                    })
-                file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
-                with open(file_path, 'w') as file:
-                    json.dump(trace_data, file, indent=4)
+            self.save_results_json(output_dir, results)
             return results
         except:
-            logger.warning(f"Error computing per-slice for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+            logger.warning(f"Error computing per-slice for series {self.series_number_pdff} {self.series_description_pdff}")
             return {}
 
     def composite_statistics(self, stats_min_loc, stats_max_loc) -> dict:
@@ -153,14 +159,14 @@ class FWSeries:
         Calculate the composite stats for slices in range (min_loc, max_loc)
         Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
         '''
-        # sort all circles and rois by x-coord
-        # this is necessary so that when cast into an np array, all of the rois across
-        # slices are properly grouped
-        for img_pair in self.image_pairs:
-            if img_pair.has_circles():
-                img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
-            if img_pair.has_rois():
-                img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
+        cx, cy, cr = 0, 1, 2
+
+        # sort all circles and rois by x-coord so ROIs are grouped consistently
+        # for img_pair in self.image_pairs:
+            # if img_pair.has_circles():
+            #     img_pair.circles = sorted(img_pair.circles, key=lambda x: x[cx])
+            # if img_pair.has_rois():
+            #     img_pair.rois = sorted(img_pair.rois, key=lambda x: x[cx])
 
         # quickly check that same number of ROIs in all images
         num_rois_in_images = []
@@ -170,42 +176,72 @@ class FWSeries:
         if len(set(num_rois_in_images)) > 1:
             logger.warning("WARNING: not all images have same number of ROIs! This may cause issues")
 
-        # check that all of the rois are aligned across slices, by making sure their centers are withing the rois radius
-        # so that we don't mix values from different ROIs
-        for i in range(len(self.image_pairs)-1):
+        # check that all of the rois are aligned across slices by radius overlap
+        for i in range(len(self.image_pairs) - 1):
             if self.image_pairs[i].has_rois() and self.image_pairs[i+1].has_rois():
-                for j in range(len(self.image_pairs[i].rois)-1):
-                    if abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX])) > self.image_pairs[i].rois[j][CR]:
+                for j in range(len(self.image_pairs[i].rois)):
+                    x_sep = abs(float(self.image_pairs[i].rois[j][cx]) - float(self.image_pairs[i+1].rois[j][cx]))
+                    y_sep = abs(float(self.image_pairs[i].rois[j][cy]) - float(self.image_pairs[i+1].rois[j][cy]))
+                    if x_sep > self.image_pairs[i].rois[j][cr]:
                         logger.warning("WARNING: ROIs not aligned across slices!")
-                    if abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY])) > self.image_pairs[i].rois[j][CR]:
+                    if y_sep > self.image_pairs[i].rois[j][cr]:
                         logger.warning("WARNING: ROIs not aligned across slices!")
 
+        if not num_rois_in_images:
+            return {
+                "means": [],
+                "stddevs": [],
+                "medians": [],
+                "mins": [],
+                "maxs": [],
+                "samples": [],
+            }
 
         # to calc mean, create lists made up of all pixels value in rois across all slices in range
-        num_rois_mode = mode(num_rois_in_images)
-        masked_values = [[] for _ in range(num_rois_mode)] #create empty list of lists
-        for img_pair in fw_series.image_pairs:
-            if (float(img_pair.pdff.SliceLocation) > stats_max_loc) or (float(img_pair.pdff.SliceLocation) < stats_min_loc):
+        roi_counts = {}
+        for count in num_rois_in_images:
+            roi_counts[count] = roi_counts.get(count, 0) + 1
+        num_rois_mode = max(roi_counts, key=roi_counts.get)
+        masked_values = [[] for _ in range(num_rois_mode)]
+        for img_pair in self.image_pairs:
+            if (img_pair.location_full > stats_max_loc) or (img_pair.location_full < stats_min_loc):
                 continue
             if not img_pair.has_rois():
                 continue
             for roi_index, roi in enumerate(img_pair.rois):
-                # make a circle mask that can be applied to pdff
-                vals = get_values_in_roi(img_pair.pdff, roi)
-                masked_values[roi_index].extend(vals)
+                if roi_index >= num_rois_mode:
+                    break
+                mask = np.zeros(img_pair.pdff_img.shape, dtype=np.uint8)
+                cv2.circle(mask, (int(roi[cx]), int(roi[cy])), int(roi[cr]), 1, -1)
+                vals = img_pair.pdff_img[mask == 1]
+                masked_values[roi_index].extend(vals.tolist())
 
-        # todo: rigid, doesn't handle situations where rois have different number of pixels
-        # cast into np.array to take mean of each row, where a row contains the values for rois across slices
-        np_arr = np.array(masked_values)
-        # calculate mean across slices for a given roi
-        results_dict = {}
-        results_dict['means']    = np.mean(np_arr, axis=1).tolist()
-        results_dict['stddevs']  = np.std(np_arr, axis=1).tolist()
-        results_dict['medians']  = np.median(np_arr, axis=1).tolist()
-        results_dict['mins']     = np.min(np_arr, axis=1).tolist()
-        results_dict['maxs']     = np.max(np_arr, axis=1).tolist()
-        results_dict['samples']  = [np_arr.shape[1]]*5
-        results_dict = renormalize_stats(results_dict)
+        results_dict = {
+            "means": [],
+            "stddevs": [],
+            "medians": [],
+            "mins": [],
+            "maxs": [],
+            "samples": [],
+        }
+        for roi_vals in masked_values:
+            if not roi_vals:
+                results_dict["means"].append(float("nan"))
+                results_dict["stddevs"].append(float("nan"))
+                results_dict["medians"].append(float("nan"))
+                results_dict["mins"].append(float("nan"))
+                results_dict["maxs"].append(float("nan"))
+                results_dict["samples"].append(0)
+                continue
+            np_vals = np.asarray(roi_vals)
+            results_dict["means"].append(float(np.mean(np_vals)))
+            results_dict["stddevs"].append(float(np.std(np_vals)))
+            results_dict["medians"].append(float(np.median(np_vals)))
+            results_dict["mins"].append(float(np.min(np_vals)))
+            results_dict["maxs"].append(float(np.max(np_vals)))
+            results_dict["samples"].append(int(np_vals.size))
+        if len(results_dict["means"]) > 2:
+            results_dict = renormalize_stats(results_dict)
         return results_dict
 
 
@@ -391,6 +427,25 @@ def extract_dicom_tags(dataset:pydicom.Dataset|None) -> dict:
     for tag in DICOM_TAG_LIST:
         info[tag] = str(dataset.get(tag))
     return info
+
+
+def get_values_in_roi(img:np.ndarray, r) -> list:
+    mask = np.zeros(img.shape, dtype=np.uint8)
+    cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
+    vals = apply_mask(img, mask)
+    return vals
+
+def renormalize_stats(results_dict:dict) -> dict:
+    # check mean value of the middle vial; it should always be 30% (20-40) if we find it is >101, renormalize by dividing by 100
+    if results_dict["means"][2] < 101:
+        results_dict["renormalized"] = False
+        return results_dict
+    results_dict["renormalized"] = True
+    for key in results_dict.keys():
+        if key == "renormalized": continue
+        if key == "samples": continue
+        results_dict[key] = [x/100 for x in results_dict[key]]
+    return results_dict
 
 
 # def plot_circles_ndarray(img, circles, name='image', waitkey=1):

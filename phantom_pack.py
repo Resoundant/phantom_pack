@@ -4,17 +4,14 @@ import pydicom
 import numpy as np
 import cv2
 import datetime
-import json
-import time
 from image_labels import identifying_labels
 from statistics import mode
 from load_dicoms import load_dicoms
 from circle_grouping import find_circle_groups
-from circle_finder import circle_finder_water, circles_to_rois
+from circle_finder import circle_finder_water
 from fw import FWSeries, FWImagePair
-from plot_utils import display_image, display_image_with_circles
+
 from pp_config import PP_CONST
-from img_utils import create_hepplus_img, plot_results
 import logging
 
 logger = logging.getLogger(__name__)
@@ -297,23 +294,23 @@ def rois_are_aligned(fw_series:FWSeries) -> bool:
     return True
 
 
-def renormalize_stats(results_dict:dict) -> dict:
-    # check mean value of the middle vial; it should always be 30% (20-40) if we find it is >101, renormalize by dividing by 100
-    if results_dict["means"][2] < 101:
-        results_dict["renormalized"] = False
-        return results_dict
-    results_dict["renormalized"] = True
-    for key in results_dict.keys():
-        if key == "renormalized": continue
-        if key == "samples": continue
-        results_dict[key] = [x/100 for x in results_dict[key]]
-    return results_dict
+# def renormalize_stats(results_dict:dict) -> dict:
+#     # check mean value of the middle vial; it should always be 30% (20-40) if we find it is >101, renormalize by dividing by 100
+#     if results_dict["means"][2] < 101:
+#         results_dict["renormalized"] = False
+#         return results_dict
+#     results_dict["renormalized"] = True
+#     for key in results_dict.keys():
+#         if key == "renormalized": continue
+#         if key == "samples": continue
+#         results_dict[key] = [x/100 for x in results_dict[key]]
+#     return results_dict
 
-def get_values_in_roi(img:np.ndarray, r) -> list:
-    mask = np.zeros(img.shape, dtype=np.uint8)
-    cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
-    vals = apply_mask(img, mask)
-    return vals
+# def get_values_in_roi(img:np.ndarray, r) -> list:
+#     mask = np.zeros(img.shape, dtype=np.uint8)
+#     cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
+#     vals = apply_mask(img, mask)
+#     return vals
 
 def create_negative_image(img):
     return 255 - np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
@@ -335,7 +332,7 @@ def find_packs_in_images(
         water_circles = circles_img_bottom(ip.water_img, min_radius, max_radius, min_vail_sep)
         # display_image_with_circles(ip.water_img, water_circles, name=str(ip.location_full), waitkey=0)
         num_circles_in_pack = 5
-        print(f"LOCATION: {ip.location}")
+        # print(f"LOCATION: {ip.location}")
         if ip.location == 6:
             pause = True
         pack_circles = find_circle_groups(

@@ -32,7 +32,7 @@ def is_valid_group(group, radius,  radius_tol, spacing, spacing_tol, linear_tol)
     radius_ok = similar_radius(radii, radius, radius_tol) 
     spacing_ok = is_uniform_spacing(centers, spacing, spacing_tol)
     collinear_ok = is_colinear(centers, linear_tol)
-    if True: #log verbose
+    if False: #log verbose
         print(f'rad: {radius_ok}, spac: {spacing_ok}, collin: {collinear_ok}')
     return radius_ok and spacing_ok and collinear_ok
 
