@@ -2,9 +2,13 @@ import pydicom
 import copy
 import numpy as np
 import cv2
-from circle_finder import circle_finder_water, circles_to_rois
+import pydicom
+from pp_config import DICOM_TAG_LIST
+
 import logging
 logger = logging.getLogger(__name__)
+
+
 
 class FWSeries:
     def __init__(self, series_number:int):
@@ -17,6 +21,9 @@ class FWSeries:
         self.pack_midpoint:float = -999.9
         self.stats_min_loc = -999.9
         self.stats_max_loc = -999.9
+        self.pdff_metadata:pydicom.Dataset|None = None
+        self.water_metadata:pydicom.Dataset|None = None
+
     
     def find_pack_midpoint(self) -> float:
         midpoint = find_midpoint([x.location_full for x in self.image_pairs if x.has_circles()])
@@ -26,6 +33,7 @@ class FWSeries:
             self.pack_midpoint = midpoint
         return self.pack_midpoint
 
+
     def number_of_slices_in_span(self, span_mm: float, center_loc: float | None ) -> int:
         if center_loc is None:
             return 0
@@ -33,6 +41,7 @@ class FWSeries:
         max_loc = center_loc + span_mm / 2
         slices_in_span = [x.location_full for x in self.image_pairs if (min_loc <= x.location_full <= max_loc)]
         return len(slices_in_span)
+
 
     def create_rois(self, roi_radius):
         ''' Draw ROIs in center of all circles, if present'''
@@ -44,6 +53,7 @@ class FWSeries:
             roi_rad_px = roi_radius/img_pair.pixel_spacing
             img_pair.rois = create_rois_from_circles(img_pair.circles, roi_rad_px)
         return 
+
 
     def find_pack_locations(self):
         all_locs = [x.location_full for x in self.image_pairs]
@@ -59,14 +69,31 @@ class FWSeries:
         self.pack_first_slice = all_locs.index(self.pack_first_slice_loc)
         self.pack_last_slice = all_locs.index(self.pack_last_slice_loc)
 
+
     def sort_data_by_sliceloc(self):
         ''' Re-orders the fw_sereies.image_paris list by slice location, ascending) '''
         self.image_pairs = sorted(self.image_pairs, key=lambda x: x.location)
+
 
     def img_pairs_in_span(self, min_loc:float, max_loc:float):
         images_in_span = [x for x in self.image_pairs if min_loc <= x.location_full <= max_loc]
         images_in_span = sorted(images_in_span, key=lambda x: x.location_full)
         return images_in_span
+
+
+    def get_image_info(self) -> dict:
+        info = extract_dicom_tags(self.pdff_metadata)
+        if self.pdff_metadata is not None:
+            info["SeriesDescription_pdff"] = self.pdff_metadata.get("SeriesDescription")
+            info["SeriesNumber_pdff"] = self.pdff_metadata.get("SeriesNumber")
+        if self.water_metadata is not None:
+            info["SeriesDescription_water"] = self.water_metadata.get("SeriesDescription")
+            info["SeriesNumber_water"] = self.water_metadata.get("SeriesNumber")
+        return info
+
+
+    def metadata(self) -> dict:
+        return extract_dicom_tags(self.pdff_metadata)
 
     def compute_and_save_results(self, span_mm, output_dir, fw_serie) -> dict:
         # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
@@ -83,7 +110,7 @@ class FWSeries:
 
         try:
             # collect info about dataset
-            image_info = get_image_info(fw_serie)
+            image_info = self.metadata()
             # save canvas of all pdff water pairs with circles
             array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
             plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
@@ -229,8 +256,8 @@ class FWImagePair:
         pdff_stddevs = []
         for r in self.rois:
             # make a circle mask that can be applied to pdff
-            mask = np.zeros(img.pdff.pixel_array.shape, dtype=np.uint8)
-            cv2.circle(mask, (r[CX], r[CY]), r[CR], color=1, thickness=-1) # solid circle (thickness = -1) filled with  1
+            mask = np.zeros(self.pdff_img.shape, dtype=np.uint8)
+            cv2.circle(mask, (r[0], r[1]), r[2], color=1, thickness=-1) # solid circle (thickness = -1) filled with  1
             # calculate mean and median
             mean_pdff   = masked_mean(self.pdff_img, mask)
             median_pdff = masked_median(self.pdff_img, mask)
@@ -354,6 +381,16 @@ def vial_sizes_in_px(vial_radius:float, radius_tolerance:float, px_size:float) -
     max_radius = float(vial_radius/px_size) + float(np.ceil(radius_tolerance/px_size))
     min_vail_sep = vial_radius/px_size
     return min_radius, max_radius, min_vail_sep
+
+def extract_dicom_tags(dataset:pydicom.Dataset|None) -> dict:
+    info = {}
+    if dataset is None:
+        for tag in DICOM_TAG_LIST:
+            info[tag] = ""
+        return info
+    for tag in DICOM_TAG_LIST:
+        info[tag] = str(dataset.get(tag))
+    return info
 
 
 # def plot_circles_ndarray(img, circles, name='image', waitkey=1):

@@ -5,7 +5,6 @@ import numpy as np
 import cv2
 import datetime
 import json
-import matplotlib.pyplot as plt
 import time
 from image_labels import identifying_labels
 from statistics import mode
@@ -15,7 +14,7 @@ from circle_finder import circle_finder_water, circles_to_rois
 from fw import FWSeries, FWImagePair
 from plot_utils import display_image, display_image_with_circles
 from pp_config import PP_CONST
-from img_utils import create_hepplus_img
+from img_utils import create_hepplus_img, plot_results
 import logging
 
 logger = logging.getLogger(__name__)
@@ -34,24 +33,7 @@ CR = 2
 
 TIMESTAMP = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
-DICOM_TAG_LIST = [
-    "PatientName",
-    "Manufacturer",
-    "ManufacturerModelName",
-    "SoftwareVersions",
-    "MagneticFieldStrength",
-    "EchoTime",
-    "RepetitionTime",
-    "EchoTrainLength",
-    "FlipAngle",
-    "VariableFlipAngleFlag",
-    "PulseSequenceName",
-    "0019109C",
-    "InstitutionName",
-    "StationName",
-    "AcquisitionDate",
-    "AcquisitionTime",
-]
+
 
 
 def phantom_pack(
@@ -116,66 +98,66 @@ def phantom_pack(
             logger.warning("ERROR computing min and max slice location")
             return {}
         
-
-
-        results = compute_and_save_results(fw, span_mm, output_dir)
+        results = fw.compute_and_save_results(span_mm, output_dir)
     return results
 
 
-def compute_and_save_results(fw:FWSeries, span_mm, output_dir) -> dict:
-    # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
-    # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
-    # partial data
+# def compute_and_save_results(fw:FWSeries, span_mm, output_dir) -> dict:
+#     # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
+#     # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
+#     # partial data
 
     
-    try:
-        composite_results = composite_statistics(fw, fw.stats_min_loc, fw.stats_max_loc)
-    except:
-        logger.warning(f"ERROR computing comsposite statistics for series {fw.series_number_pdff} {fw.series_description_pdff}")
+#     try:
+#         composite_results = composite_statistics(fw, fw.stats_min_loc, fw.stats_max_loc)
+#     except:
+#         logger.warning(f"ERROR computing comsposite statistics for series {fw.series_number_pdff} {fw.series_description_pdff}")
  
-    cropped_arr = create_hepplus_img(fw)
-    x=1
+#     cropped_arr = create_hepplus_img(fw)
+#     fp = os.path.join(output_dir,f'{fw.series_number}_tiles.png')
+#     plot_results(fw.image_pairs, dest_filepath=fp)
+#     x=1
 
-    # DECOUPLE AND RESTORE THIS
-    # try:
-    #     # collect info about dataset
-    #     image_info = get_image_info(fw_serie)
-    #     # save canvas of all pdff water pairs with circles
-    #     array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
-    #     plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-    #     # save image of just the selected slices
-    #     array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
-    #     image_pairs_in_span = fw_serie.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
-    #     plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
-    # except:
-    #     logger.warning(f"Error saving plots for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
+#     # DECOUPLE AND RESTORE THIS
+#     # try:
+#     #     # collect info about dataset
+#     #     image_info = get_image_info(fw_serie)
+#     #     # save canvas of all pdff water pairs with circles
+#     #     array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+#     #     plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
+#     #     # save image of just the selected slices
+#     #     array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+#     #     image_pairs_in_span = fw_serie.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
+#     #     plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+#     # except:
+#     #     logger.warning(f"Error saving plots for series {fw_serie.series_number_pdff} {fw_serie.series_description_pdff}")
 
-    try:
-        # save plots of slice values
-        plot_slice_values(fw, vert_lines=[fw.stats_min_loc, fw.stats_max_loc], directory_path=output_dir)
-        results = composite_results # RESTORE ME| image_info
+#     try:
+#         # save plots of slice values
+#         plot_slice_values(fw, vert_lines=[fw.stats_min_loc, fw.stats_max_loc], directory_path=output_dir)
+#         results = composite_results # RESTORE ME| image_info
 
-        if results:
-            file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
-            with open(file_path, 'w') as file:
-                json.dump(results, file, indent=4)
-            logger.info(f"  JSON data saved to {file_path}")
-        # if MATCH_TRACE:
-        #     trace_data = []
-        #     for imgs in fw_serie.image_pairs:
-        #         trace_data.append({
-        #             "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
-        #             "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
-        #             "pdff_filename" : f"Series {imgs.pdff.filename}",
-        #             "water_filename" : f"Series {imgs.water.filename}",
-        #         })
-        #     file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
-        #     with open(file_path, 'w') as file:
-        #         json.dump(trace_data, file, indent=4)
-        return results
-    except:
-        logger.warning(f"Error computing per-slice for series {fw.series_number_pdff} {fw_serie.series_description_pdff}")
-        return {}
+#         if results:
+#             file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
+#             with open(file_path, 'w') as file:
+#                 json.dump(results, file, indent=4)
+#             logger.info(f"  JSON data saved to {file_path}")
+#         # if MATCH_TRACE:
+#         #     trace_data = []
+#         #     for imgs in fw_serie.image_pairs:
+#         #         trace_data.append({
+#         #             "pdff_trace" : f"Series {imgs.pdff.SeriesNumber}, Instance {imgs.pdff.InstanceNumber}",
+#         #             "water_trace" : f"Series {imgs.water.SeriesNumber}, Instance {imgs.water.InstanceNumber}",
+#         #             "pdff_filename" : f"Series {imgs.pdff.filename}",
+#         #             "water_filename" : f"Series {imgs.water.filename}",
+#         #         })
+#         #     file_path = os.path.join(directory_path, OUTPUT_DIR, f"{results['PatientName']}_{results['SeriesNumber_pdff']}_trace.json")
+#         #     with open(file_path, 'w') as file:
+#         #         json.dump(trace_data, file, indent=4)
+#         return results
+#     except:
+#         logger.warning(f"Error computing per-slice for series {fw.series_number_pdff} {fw.series_description_pdff}")
+#         return {}
 
 def log_unknowns_to_file(output_dir, all_dicoms):
     unknowns = [x for x in all_dicoms if x.image_label == "unknown"]
@@ -217,102 +199,69 @@ def label_dataset(ds:pydicom.Dataset):
 
 
 
+# def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> dict:
+#     '''
+#     Calculate the composite stats for slices in range (min_loc, max_loc)
+#     Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
+#     '''
 
-# def slice_stats(img:ImagePair) -> dict:
-#     # Compute the mean, median, and standard dev of a pdff/water pair.
-#     # img should be a single slice of the img_pack_data, with pdff, water and rois
-#     # Output: pdff_means:[], pdff_stddevs:[], pdff_medians:[] - lists of mean, stddev, median
-#     # for the circles
-#     stats = {}
-#     # default values are -10
-#     if img.has_rois() is False:
-#         stats["pdff_means"] = [-10]*5 # HACK - fixed for 5 ROIs
-#         stats["pdff_medians"] = [-10]*5
-#         stats["pdff_stddevs"] = [0]*5
-#         return stats
-#     # apply rois to PDFF
-#     pdff_means = []
-#     pdff_medians = []
-#     pdff_stddevs = []
-#     for r in img.rois:
-#         # make a circle mask that can be applied to pdff
-#         mask = np.zeros(img.pdff.pixel_array.shape, dtype=np.uint8)
-#         cv2.circle(mask, (r[CX], r[CY]), r[CR], color=1, thickness=-1) # solid circle (thickness = -1) filled with  1
-#         # calculate mean and median
-#         mean_pdff   = masked_mean(  img.pdff.pixel_array, mask)
-#         median_pdff = masked_median(img.pdff.pixel_array, mask)
-#         stddev_pdff = masked_stddev(img.pdff.pixel_array, mask)
-#         pdff_means.append(mean_pdff)
-#         pdff_medians.append(median_pdff)
-#         pdff_stddevs.append(stddev_pdff)
-#     stats["pdff_means"] = pdff_means
-#     stats["pdff_medians"] = pdff_medians
-#     stats["pdff_stddevs"] = pdff_stddevs
-#     return stats
+#     num_rois_in_images_list = count_rois_in_images(fw_series)
+#     if len(set(num_rois_in_images_list)) != 1:
+#         raise ValueError("Inconsistent number of ROIs in series")
 
-def composite_statistics(fw_series:FWSeries, stats_min_loc, stats_max_loc) -> dict:
-    '''
-    Calculate the composite stats for slices in range (min_loc, max_loc)
-    Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
-    '''
+#     if not rois_are_aligned(fw_series):
+#         do_nothing = True
 
-    num_rois_in_images_list = count_rois_in_images(fw_series)
-    if len(set(num_rois_in_images_list)) != 1:
-        raise ValueError("Inconsistent number of ROIs in series")
-
-    if not rois_are_aligned(fw_series):
-        do_nothing = True
-
-    # sort all circles and rois by x-coord
-    # this is necessary so that when cast into an np array, all of the rois across
-    # slices are properly grouped
-    for img_pair in fw_series.image_pairs:
-        if img_pair.has_circles():
-            img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
-        if img_pair.has_rois():
-            img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
+#     # sort all circles and rois by x-coord
+#     # this is necessary so that when cast into an np array, all of the rois across
+#     # slices are properly grouped
+#     for img_pair in fw_series.image_pairs:
+#         if img_pair.has_circles():
+#             img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
+#         if img_pair.has_rois():
+#             img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
 
 
-    # to calc mean, create lists made up of all pixels value in rois across all slices in range
-    num_rois_mode = mode(num_rois_in_images_list)
-    masked_values = [[] for _ in range(num_rois_mode)] #create empty list of lists
-    for img_pair in fw_series.image_pairs:
-        if (img_pair.location_full > stats_max_loc) or (img_pair.location_full < stats_min_loc):
-            continue
-        if not img_pair.has_rois():
-            continue
-        for roi_index, roi in enumerate(img_pair.rois):
-            # make a circle mask that can be applied to pdff
-            vals = get_values_in_roi(img_pair.pdff_img, roi)
-            masked_values[roi_index].extend(vals)
+#     # to calc mean, create lists made up of all pixels value in rois across all slices in range
+#     num_rois_mode = mode(num_rois_in_images_list)
+#     masked_values = [[] for _ in range(num_rois_mode)] #create empty list of lists
+#     for img_pair in fw_series.image_pairs:
+#         if (img_pair.location_full > stats_max_loc) or (img_pair.location_full < stats_min_loc):
+#             continue
+#         if not img_pair.has_rois():
+#             continue
+#         for roi_index, roi in enumerate(img_pair.rois):
+#             # make a circle mask that can be applied to pdff
+#             vals = get_values_in_roi(img_pair.pdff_img, roi)
+#             masked_values[roi_index].extend(vals)
 
-    # calculate stats per ROI list to handle variable pixel counts
-    results_dict = {
-        "means": [],
-        "stddevs": [],
-        "medians": [],
-        "mins": [],
-        "maxs": [],
-        "samples": [],
-    }
-    for roi_vals in masked_values:
-        if not roi_vals:
-            results_dict["means"].append(float("nan"))
-            results_dict["stddevs"].append(float("nan"))
-            results_dict["medians"].append(float("nan"))
-            results_dict["mins"].append(float("nan"))
-            results_dict["maxs"].append(float("nan"))
-            results_dict["samples"].append(0)
-            continue
-        np_vals = np.asarray(roi_vals)
-        results_dict["means"].append(float(np.mean(np_vals)))
-        results_dict["stddevs"].append(float(np.std(np_vals)))
-        results_dict["medians"].append(float(np.median(np_vals)))
-        results_dict["mins"].append(float(np.min(np_vals)))
-        results_dict["maxs"].append(float(np.max(np_vals)))
-        results_dict["samples"].append(int(np_vals.size))
-    results_dict = renormalize_stats(results_dict)
-    return results_dict
+#     # calculate stats per ROI list to handle variable pixel counts
+#     results_dict = {
+#         "means": [],
+#         "stddevs": [],
+#         "medians": [],
+#         "mins": [],
+#         "maxs": [],
+#         "samples": [],
+#     }
+#     for roi_vals in masked_values:
+#         if not roi_vals:
+#             results_dict["means"].append(float("nan"))
+#             results_dict["stddevs"].append(float("nan"))
+#             results_dict["medians"].append(float("nan"))
+#             results_dict["mins"].append(float("nan"))
+#             results_dict["maxs"].append(float("nan"))
+#             results_dict["samples"].append(0)
+#             continue
+#         np_vals = np.asarray(roi_vals)
+#         results_dict["means"].append(float(np.mean(np_vals)))
+#         results_dict["stddevs"].append(float(np.std(np_vals)))
+#         results_dict["medians"].append(float(np.median(np_vals)))
+#         results_dict["mins"].append(float(np.min(np_vals)))
+#         results_dict["maxs"].append(float(np.max(np_vals)))
+#         results_dict["samples"].append(int(np_vals.size))
+#     results_dict = renormalize_stats(results_dict)
+#     return results_dict
 
 def count_rois_in_images(fw_series:FWSeries) -> list:
     #  check that same number of ROIs in all images
@@ -386,6 +335,9 @@ def find_packs_in_images(
         water_circles = circles_img_bottom(ip.water_img, min_radius, max_radius, min_vail_sep)
         # display_image_with_circles(ip.water_img, water_circles, name=str(ip.location_full), waitkey=0)
         num_circles_in_pack = 5
+        print(f"LOCATION: {ip.location}")
+        if ip.location == 6:
+            pause = True
         pack_circles = find_circle_groups(
             water_circles,
             radius = vial_radius/px_size,
@@ -398,6 +350,8 @@ def find_packs_in_images(
             continue
         # drop trivial first dimension/ hack: keep only first group
         ip.circles = pack_circles[0]
+        if ip.circles:
+            pause = True
 
     count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
     logger.info(f"  {len(count_circles)} slices contain phantom pack")
@@ -633,66 +587,6 @@ def apply_mask(image, mask) -> list:
     return vals
 
 
-def get_image_info(fw_series:FWSeries) -> dict:
-    info = {}
-    pdff  = fw_series.image_pairs[0].pdff
-    water = fw_series.image_pairs[0].water
-    for tag in DICOM_TAG_LIST:
-        info[tag] = str(pdff.get(tag))
-    info["SeriesDescription_pdff"] = pdff.get("SeriesDescription")
-    info["SeriesDescription_water"] = water.get("SeriesDescription")
-    info["SeriesNumber_pdff"] = pdff.get("SeriesNumber")
-    info["SeriesNumber_water"] = water.get("SeriesNumber")
-    return info
-
-def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
-    # each entry in this will will be the 5 vials  in a slice
-    pdff_means = []
-    pdff_medians = []
-    pdff_stddevs = []
-    slice_locations = []
-
-    for img in fw_series.image_pairs:
-        mystats = img.slice_stats()
-        pdff_means.append(mystats['pdff_means'])
-        pdff_medians.append(mystats['pdff_medians'])
-        pdff_stddevs.append(mystats['pdff_stddevs'])
-        slice_locations.append(img.location_full)
-    #convert to np.array and transpose, so that each row is one roi loc across slices
-    data_means = np.array(pdff_means).transpose()
-    data_medians = np.array(pdff_means).transpose()
-    data_stddevs = np.array(pdff_stddevs).transpose()
-
-
-    for i in range(data_means.shape[0]):
-        plt.errorbar(slice_locations, data_means[i],  yerr=data_stddevs[i], fmt='.', label=f"Mean {i}")
-    if len(vert_lines) > 0:
-        plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
-        plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
-    plt.title(f"PDFF Means +/- StdDev {fw_series.series_number_pdff} - {fw_series.series_description_pdff}")
-    plt.xlabel("Slice Location")
-    plt.ylabel("Mean PDFF")
-    plt.legend()
-    plt.grid(True)
-    # plt.show()
-    filename = f"{fw_series.image_pairs[0].pdff.PatientName}_{fw_series.series_number_pdff}_mean_stddev.png"
-    plt.savefig(os.path.join(directory_path, filename))
-    plt.close()
-
-    for i in range(data_means.shape[0]):
-        plt.plot(slice_locations, data_medians[i], '-x', label=f"Median {i}")
-    if len(vert_lines) > 0:
-        plt.axvline(x=vert_lines[0],  color='r', linestyle='--', linewidth=1) # vertical lines at edge of selected slices
-        plt.axvline(x=vert_lines[-1], color='r', linestyle='--', linewidth=1)
-    plt.title(f"Median PDFFs per slice {fw_series.series_number_pdff} - {fw_series.series_description_pdff}")
-    plt.xlabel("Slice Location")
-    plt.ylabel("Median PDFF")
-    plt.legend()
-    plt.grid(True)
-    # plt.show()
-    filename = f"{fw_series.image_pairs[0].pdff.PatientName}_{fw_series.series_number_pdff}_median.png"
-    plt.savefig(os.path.join(directory_path, filename))
-    plt.close()
 
 
 

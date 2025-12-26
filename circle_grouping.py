@@ -32,9 +32,11 @@ def is_valid_group(group, radius,  radius_tol, spacing, spacing_tol, linear_tol)
     radius_ok = similar_radius(radii, radius, radius_tol) 
     spacing_ok = is_uniform_spacing(centers, spacing, spacing_tol)
     collinear_ok = is_colinear(centers, linear_tol)
+    if True: #log verbose
+        print(f'rad: {radius_ok}, spac: {spacing_ok}, collin: {collinear_ok}')
     return radius_ok and spacing_ok and collinear_ok
 
-def find_circle_groups(circles, radius, spacing, num_circles_in_group = 5, radius_tol=0.2, spacing_tol=0.1,  linear_tol=0.1):
+def find_circle_groups(circles, radius, spacing, num_circles_in_group = 5, radius_tol=0.2, spacing_tol=0.2,  linear_tol=0.1):
     results = []
     start = time()
     for group in combinations(circles, num_circles_in_group):

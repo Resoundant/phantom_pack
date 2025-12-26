@@ -51,9 +51,6 @@ def create_hepplus_img(fw:FWSeries) -> np.ndarray:
     return pack_arr_img
 
 def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
-    # TODO: make the tiled collage of phantom packs first,
-    # so that it can be normalized once and evently.
-    # Make the circles on a tranparent bg, crop and overlay them.
     cols = 3
     rows = len(img_pairs)
 
@@ -76,31 +73,57 @@ def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
     canvas = np.zeros((bbox_h * rows, bbox_w * cols, channels), dtype=np.uint8)
     watr_col_canvas = np.zeros((bbox_h * rows, bbox_w, channels), dtype=np.uint8)
     pdff_col_canvas = np.zeros((bbox_h * rows, bbox_w, channels), dtype=np.uint8)
+    cropped_watr_list = []
+    cropped_pdff_list = []
+    watr_min = None
+    watr_max = None
+    pdff_min = None
+    pdff_max = None
+    for img_pair in img_pairs:
+        watr_crop = img_pair.water_img[y1:y2, x1:x2]
+        pdff_crop = img_pair.pdff_img[y1:y2, x1:x2]
+        cropped_watr_list.append(watr_crop)
+        cropped_pdff_list.append(pdff_crop)
+        if watr_crop.size:
+            w_min = float(np.min(watr_crop))
+            w_max = float(np.max(watr_crop))
+            watr_min = w_min if watr_min is None else min(watr_min, w_min)
+            watr_max = w_max if watr_max is None else max(watr_max, w_max)
+        if pdff_crop.size:
+            # p_min = float(np.min(pdff_crop))
+            # p_max = float(np.max(pdff_crop))
+            # pdff_min = p_min if pdff_min is None else min(pdff_min, p_min)
+            # pdff_max = p_max if pdff_max is None else max(pdff_max, p_max)
+            pdff_min = 0
+            pdff_max = 100
+
+    def normalize_to_uint8(img, vmin, vmax):
+        if vmin is None or vmax is None or vmax <= vmin:
+            return np.zeros_like(img, dtype=np.uint8)
+        scale = 255.0 / (vmax - vmin)
+        img_f = img.astype(np.float32, copy=False)
+        return np.uint8(np.clip((img_f - vmin) * scale, 0, 255))
+
     for i, img_pair in enumerate(img_pairs):
-        watr_copy = deepcopy(img_pair.water_img)
-        pdff_copy = deepcopy(img_pair.pdff_img)
-        cimg_watr = np.uint8(cv2.normalize(watr_copy, None, 0, 255, cv2.NORM_MINMAX))
+        cimg_watr = normalize_to_uint8(cropped_watr_list[i], watr_min, watr_max)
         cimg_watr = cv2.cvtColor(cimg_watr, cv2.COLOR_GRAY2BGR)
-        cimg_pdff = np.uint8(cv2.normalize(pdff_copy, None, 0, 255, cv2.NORM_MINMAX))
+        cimg_pdff = normalize_to_uint8(cropped_pdff_list[i], pdff_min, pdff_max)
         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
         # draw circles around water vials
         if img_pair.has_circles():
             np_circles = np.uint16(np.around(img_pair.circles))
             for c in np_circles:
-                cv2.circle(cimg_watr,(c[0],c[1]),c[2],(0,0,255),1) 
+                cv2.circle(cimg_watr,(int(c[0]) - x1,int(c[1]) - y1),c[2],(0,0,255),1) 
         # draw ROIs in pdff vials
         if img_pair.has_rois():
             np_rois = np.uint16(np.around(img_pair.rois))
             for j, c in enumerate(np_rois):
-                cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
-        # crop out phantom pack and slot into tile location.
-        cropped_watr = cimg_watr[y1:y2, x1:x2]
-        cropped_pdff = cimg_pdff[y1:y2, x1:x2]
+                cv2.circle(cimg_pdff, (int(c[0]) - x1,int(c[1]) - y1),c[2],(255,255,0),1)
         row_text = f"{float(img_pair.location_full):.1f}mm"
         label_box = put_text_in_box(np.zeros((y2-y1, x2-x1, channels), dtype=np.uint8), row_text)
         # row_position = i * bbox_h:(i + 1) * bbox_h
-        canvas[i * bbox_h:(i + 1) * bbox_h,        0:bbox_w  ] = cropped_watr
-        canvas[i * bbox_h:(i + 1) * bbox_h,   bbox_w:bbox_w*2] = cropped_pdff
+        canvas[i * bbox_h:(i + 1) * bbox_h,        0:bbox_w  ] = cimg_watr
+        canvas[i * bbox_h:(i + 1) * bbox_h,   bbox_w:bbox_w*2] = cimg_pdff
         canvas[i * bbox_h:(i + 1) * bbox_h, 2*bbox_w:bbox_w*3] = label_box
     return canvas
 
@@ -146,10 +169,14 @@ def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_im
     height, width, channels = cimg_setup.shape
 
     canvas = np.zeros((height * rows, width * cols, channels), dtype=np.uint8)
+    water_stack = np.vstack([img_pair.water_img for img_pair in image_pairs])
+    water_stack = np.uint8(cv2.normalize(water_stack, None, 0, 255, cv2.NORM_MINMAX))
     for i, img_pair in enumerate(image_pairs):
-        cimg_water = np.uint8(cv2.normalize(img_pair.water_img, None, 0, 255, cv2.NORM_MINMAX))
+        row_start = i * height
+        row_end = row_start + height
+        cimg_water = water_stack[row_start:row_end, :]
         cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
-        cimg_pdff = np.uint8(cv2.normalize(img_pair.pdff_img, None, 0, 255, cv2.NORM_MINMAX))
+        cimg_pdff = np.uint8(np.clip(img_pair.pdff_img, 0, 255))
         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
         if img_pair.has_circles():
             np_circles = np.uint16(np.around(img_pair.circles))
@@ -157,10 +184,10 @@ def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_im
                 cv2.circle(cimg_water,(c[0],c[1]),c[2],(0,0,255),1)             # draw the outer circle
         if img_pair.has_rois():
             np_rois = np.uint16(np.around(img_pair.rois))
-            # mystats = slice_stats(img_pair)
+            mystats = img_pair.slice_stats()
             for j, c in enumerate(np_rois):
                 cv2.circle(cimg_pdff, (c[0],c[1]),c[2],(255,255,0),1)
-                # mystr = f"{mystats['pdff_means'][j]:.1f}"
+                mystr = f"{mystats['pdff_means'][j]:.1f}"
                 text_size, _ = cv2.getTextSize(mystr, cv2.FONT_HERSHEY_SIMPLEX, 0.3, 1)
                 text_w, text_h = text_size
                 mypt = (c[0]-3*c[2],c[1]+4*c[2]+text_h) # default/odd, plot below vial
@@ -183,7 +210,7 @@ def plot_results(image_pairs:list[FWImagePair], dest_filepath:str="", display_im
         canvas[i * height:(i + 1) * height, width:width*2] = cimg_pdff
 
     # save image
-    if (dest_filepath != None):
+    if (dest_filepath):
         cv2.imwrite(dest_filepath, canvas)
 
     if (display_image):
