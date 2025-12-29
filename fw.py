@@ -1,4 +1,3 @@
-import pydicom
 import copy
 import numpy as np
 import cv2
@@ -104,24 +103,28 @@ class FWSeries:
     def metadata(self) -> dict:
         return extract_dicom_tags(self.pdff_metadata)
 
-    def compute_stats_and_metadata(self, span_mm, fw_serie):
-        stats_min_loc = fw_serie.pack_midpoint - span_mm / 2
-        stats_max_loc = fw_serie.pack_midpoint + span_mm / 2
+    def compute_stats_and_metadata(self, span_mm):
+        stats_min_loc = self.pack_midpoint - span_mm / 2
+        stats_max_loc = self.pack_midpoint + span_mm / 2
         composite_results = self.composite_statistics(stats_min_loc, stats_max_loc)
         image_info = self.metadata()
         return stats_min_loc, stats_max_loc, composite_results, image_info
 
     def save_plot_images(self, output_dir, image_info, stats_min_loc, stats_max_loc):
-        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_allimg.png")
+        patient_name = image_info.get("PatientName", "unknown")
+        series_number = image_info.get("SeriesNumber_pdff", "unknown")
+        array_filepath = os.path.join(output_dir, f"{patient_name}_{series_number}_allimg.png")
         # TODO restore
         # plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-        array_filepath = os.path.join(output_dir, f"{image_info['PatientName']}_{image_info['SeriesNumber_pdff']}_selected.png")
+        array_filepath = os.path.join(output_dir, f"{patient_name}_{series_number}_selected.png")
         image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
         # plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
 
     def save_results_json(self, output_dir, results):
         if results:
-            file_path = os.path.join(output_dir, f"{results['PatientName']}_{results['SeriesNumber_pdff']}.json")
+            patient_name = results.get("PatientName", "unknown")
+            series_number = results.get("SeriesNumber_pdff", "unknown")
+            file_path = os.path.join(output_dir, f"{patient_name}_{series_number}.json")
             with open(file_path, 'w') as file:
                 json.dump(results, file, indent=4)
             logger.info(f"  JSON data saved to {file_path}")
@@ -159,14 +162,12 @@ class FWSeries:
         Calculate the composite stats for slices in range (min_loc, max_loc)
         Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
         '''
-        cx, cy, cr = 0, 1, 2
-
         # sort all circles and rois by x-coord so ROIs are grouped consistently
         # for img_pair in self.image_pairs:
             # if img_pair.has_circles():
-            #     img_pair.circles = sorted(img_pair.circles, key=lambda x: x[cx])
+            #     img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
             # if img_pair.has_rois():
-            #     img_pair.rois = sorted(img_pair.rois, key=lambda x: x[cx])
+            #     img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
 
         # quickly check that same number of ROIs in all images
         num_rois_in_images = []
@@ -180,11 +181,11 @@ class FWSeries:
         for i in range(len(self.image_pairs) - 1):
             if self.image_pairs[i].has_rois() and self.image_pairs[i+1].has_rois():
                 for j in range(len(self.image_pairs[i].rois)):
-                    x_sep = abs(float(self.image_pairs[i].rois[j][cx]) - float(self.image_pairs[i+1].rois[j][cx]))
-                    y_sep = abs(float(self.image_pairs[i].rois[j][cy]) - float(self.image_pairs[i+1].rois[j][cy]))
-                    if x_sep > self.image_pairs[i].rois[j][cr]:
+                    x_sep = abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX]))
+                    y_sep = abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY]))
+                    if x_sep > self.image_pairs[i].rois[j][CR]:
                         logger.warning("WARNING: ROIs not aligned across slices!")
-                    if y_sep > self.image_pairs[i].rois[j][cr]:
+                    if y_sep > self.image_pairs[i].rois[j][CR]:
                         logger.warning("WARNING: ROIs not aligned across slices!")
 
         if not num_rois_in_images:
@@ -212,7 +213,7 @@ class FWSeries:
                 if roi_index >= num_rois_mode:
                     break
                 mask = np.zeros(img_pair.pdff_img.shape, dtype=np.uint8)
-                cv2.circle(mask, (int(roi[cx]), int(roi[cy])), int(roi[cr]), 1, -1)
+                cv2.circle(mask, (int(roi[CX]), int(roi[CY])), int(roi[CR]), 1, -1)
                 vals = img_pair.pdff_img[mask == 1]
                 masked_values[roi_index].extend(vals.tolist())
 
@@ -282,9 +283,10 @@ class FWImagePair:
         stats = {}
         # default values are -10
         if self.has_rois() is False:
-            stats["pdff_means"] = [-10]*5 # HACK - fixed for 5 ROIs
-            stats["pdff_medians"] = [-10]*5
-            stats["pdff_stddevs"] = [0]*5
+            roi_count = len(self.rois)
+            stats["pdff_means"] = [-10] * roi_count
+            stats["pdff_medians"] = [-10] * roi_count
+            stats["pdff_stddevs"] = [0] * roi_count
             return stats
         # apply rois to PDFF
         pdff_means = []
@@ -384,9 +386,8 @@ def find_fw_pairs(all_dicoms:list[pydicom.Dataset]) -> list[FWSeries]:
             if len(wat_same_loc) >= 1:
                 fw_series.series_number_water = wat_same_loc[0].SeriesNumber
                 fw_series.series_description_water = wat_same_loc[0].SeriesDescription
-                img_pair = FWImagePair(ff,wat_same_loc[0])
-                img_pair.location = int(ff.SliceLocation)
-                img_pair.location_full = ff.SliceLocation
+                px_spacing = wat_same_loc[0].PixelSpacing[0] # todo: check if square and same as pdff
+                img_pair = FWImagePair(ff.pixel_array, wat_same_loc[0].pixel_array, px_spacing, ff.SliceLocation)
                 fw_series.image_pairs.append(img_pair)
         series_found.append(fw_series)
     return series_found

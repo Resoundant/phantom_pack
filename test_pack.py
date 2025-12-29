@@ -23,11 +23,6 @@ def create_test_image() -> np.ndarray:
     return img
 
 if __name__ == "__main__":
-    #test_image = create_test_image()
-    # cv2.imshow("Test Image", test_image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
     fw_series = simulate_phantom_pack()
 
     # display a few images to be sure
