@@ -4,8 +4,10 @@ import cv2
 import pydicom
 import os
 import json
-# from img_utils import plot_results
+from pathlib import Path
 from pp_config import DICOM_TAG_LIST
+import matplotlib.pyplot as plt
+
 
 import logging
 logger = logging.getLogger(__name__)
@@ -102,72 +104,133 @@ class FWSeries:
 
     def metadata(self) -> dict:
         return extract_dicom_tags(self.pdff_metadata)
+    
 
-    def compute_stats_and_metadata(self, span_mm):
-        stats_min_loc = self.pack_midpoint - span_mm / 2
-        stats_max_loc = self.pack_midpoint + span_mm / 2
-        composite_results = self.composite_statistics(stats_min_loc, stats_max_loc)
-        image_info = self.metadata()
-        return stats_min_loc, stats_max_loc, composite_results, image_info
+    def plot_composite_means(self, composite_results, output_dir):
+        if composite_results is None:
+            return
+        means = composite_results.means if isinstance(composite_results, FWStats) else composite_results.get("means", [])
+        means = np.asarray(means, dtype=float)
+        if means.size == 0:
+            return
+        os.makedirs(output_dir, exist_ok=True)
+        x_vals = np.arange(means.size)
+        plt.figure(figsize=(6, 3))
+        plt.plot(x_vals, means, marker='o', linewidth=1)
+        plt.title(f"Composite Means {self.series_number_pdff}")
+        plt.xlabel("ROI Index")
+        plt.ylabel("Mean")
+        plt.grid(True, alpha=0.3)
+        patient_name = "unknown"
+        if self.pdff_metadata is not None:
+            patient_name = self.pdff_metadata.get("PatientName", "unknown")
+        filename = f"{patient_name}_{self.series_number_pdff}_composite_means.png"
+        plt.savefig(os.path.join(output_dir, filename), dpi=150, bbox_inches="tight")
+        plt.close()
+
+
+    def plot_roi_values_linear(self, composite_results, output_dir):
+        if composite_results is None:
+            return
+        values = composite_results.values if isinstance(composite_results, FWStats) else composite_results.get("values", [])
+        values = np.asarray(values, dtype=float)
+        if values.size == 0:
+            return
+        os.makedirs(output_dir, exist_ok=True)
+        x_vals = np.arange(values.size)
+        plt.figure(figsize=(6, 3))
+        plt.plot(x_vals, values, marker='o', linewidth=1)
+        plt.title(f"Composite Means {self.series_number_pdff}")
+        plt.xlabel("ROI Index")
+        plt.ylabel("Mean")
+        plt.grid(True, alpha=0.3)
+        patient_name = "unknown"
+        if self.pdff_metadata is not None:
+            patient_name = self.pdff_metadata.get("PatientName", "unknown")
+        filename = f"{patient_name}_{self.series_number_pdff}_roi_values_lin.png"
+        plt.savefig(os.path.join(output_dir, filename), dpi=150, bbox_inches="tight")
+        plt.close()
+    
 
     def save_plot_images(self, output_dir, image_info, stats_min_loc, stats_max_loc):
         patient_name = image_info.get("PatientName", "unknown")
-        series_number = image_info.get("SeriesNumber_pdff", "unknown")
-        array_filepath = os.path.join(output_dir, f"{patient_name}_{series_number}_allimg.png")
+        series_number = self.series_number
         # TODO restore
         # plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
         array_filepath = os.path.join(output_dir, f"{patient_name}_{series_number}_selected.png")
         image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
         # plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
+        hp_img_fp = Path(output_dir) / f'{series_number}_hepplus_img.png'
+        hepplus_img = self.create_save_hepplus_img_array(filepath=hp_img_fp)
+
+
+    def create_save_hepplus_img_array(self, filepath=None) -> np.ndarray:
+        image_pairs_in_span = self.img_pairs_in_span(min_loc=self.stats_min_loc, max_loc=self.stats_max_loc)
+        pack_arr_img = pack_array(image_pairs_in_span)
+        # plot_utils.display_cimg(pack_arr_img)
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        cv2.imwrite(filepath, pack_arr_img)
+        return pack_arr_img
+
 
     def save_results_json(self, output_dir, results):
         if results:
-            patient_name = results.get("PatientName", "unknown")
-            series_number = results.get("SeriesNumber_pdff", "unknown")
+            results_dict = results.to_dict() if isinstance(results, FWStats) else results
+            patient_name = results_dict.get("PatientName", "unknown")
+            series_number = results_dict.get("SeriesNumber_pdff", "unknown")
             file_path = os.path.join(output_dir, f"{patient_name}_{series_number}.json")
             with open(file_path, 'w') as file:
-                json.dump(results, file, indent=4)
+                json.dump(results_dict, file, indent=4)
             logger.info(f"  JSON data saved to {file_path}")
+
+    def slice_stats(self):
+        for fw in self.image_pairs:
+            fw.slice_stats()
+
 
     def compute_and_save_results(self, span_mm, output_dir) -> dict:
         # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
         # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
         # partial data
-        stats_min_loc = 0
-        stats_max_loc = 0
-        composite_results = {}
+        stats_min_loc = self.pack_midpoint - span_mm / 2
+        stats_max_loc = self.pack_midpoint + span_mm / 2 
         image_info = {}
+
+        # slice stats
         try:
-            stats_min_loc, stats_max_loc, composite_results, image_info = self.compute_stats_and_metadata(span_mm)
+            self.slice_stats()
+        except:
+            logger.warning(f"Error computing per-slices statistics for series {self.series_number_pdff} {self.series_description_pdff}")
+
+        # composite stats
+        try:
+            composite_results = self.composite_statistics(self.pack_midpoint, span_mm, max_slices=3)
+            self.plot_composite_means(composite_results, output_dir)
         except:
             logger.warning(f"Error computing comsposite statistics for series {self.series_number_pdff} {self.series_description_pdff}")
 
+        # images and plots
         try:
             self.save_plot_images(output_dir, image_info, stats_min_loc, stats_max_loc)
         except:
             logger.warning(f"Error saving plots for series {self.series_number_pdff} {self.series_description_pdff}")
 
+        # json results
         try:
-            # save plots of slice values
-            # plot_slice_values(fw_serie, vert_lines=[stats_min_loc, stats_max_loc], directory_path=output_dir)
-            results = composite_results | image_info
-            self.save_results_json(output_dir, results)
-            return results
+            self.save_results_json(output_dir, composite_results)
+            return composite_results
         except:
             logger.warning(f"Error computing per-slice for series {self.series_number_pdff} {self.series_description_pdff}")
             return {}
 
-    def composite_statistics(self, stats_min_loc, stats_max_loc) -> dict:
+    def composite_statistics(self, center_mm, range_mm, max_slices:int = 0):
         '''
         Calculate the composite stats for slices in range (min_loc, max_loc)
-        Output (dict): means:[], stddevs:[], medians:[], mins:[], maxs:[], samples:[]
+        
         '''
         # sort all circles and rois by x-coord so ROIs are grouped consistently
-        # for img_pair in self.image_pairs:
-            # if img_pair.has_circles():
-            #     img_pair.circles = sorted(img_pair.circles, key=lambda x: x[CX])
-            # if img_pair.has_rois():
-            #     img_pair.rois = sorted(img_pair.rois, key=lambda x: x[CX])
+        for fw in self.image_pairs:
+            fw.sort_circles_by_x_coord()
 
         # quickly check that same number of ROIs in all images
         num_rois_in_images = []
@@ -184,66 +247,153 @@ class FWSeries:
                     x_sep = abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX]))
                     y_sep = abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY]))
                     if x_sep > self.image_pairs[i].rois[j][CR]:
-                        logger.warning("WARNING: ROIs not aligned across slices!")
+                        logger.warning("WARNING: ROIs not aligned across slices (horizontally)!")
                     if y_sep > self.image_pairs[i].rois[j][CR]:
-                        logger.warning("WARNING: ROIs not aligned across slices!")
+                        logger.warning("WARNING: ROIs not aligned across slices (vertically)!")
 
-        if not num_rois_in_images:
-            return {
-                "means": [],
-                "stddevs": [],
-                "medians": [],
-                "mins": [],
-                "maxs": [],
-                "samples": [],
-            }
+        # limit min and max location to include (at most) max_slices
+        stats_min_loc = center_mm - range_mm // 2
+        stats_max_loc = center_mm + range_mm // 2
+        slices_in_range = sorted(
+            (
+                img_pair for img_pair in self.image_pairs
+                if stats_min_loc <= img_pair.location_full <= stats_max_loc
+            ),
+            key=lambda img_pair: img_pair.location_full
+        )
+        if (max_slices > 0) and (len(slices_in_range) > max_slices):
+            slices_in_range = list(slices_in_range)
+            slices_in_range.sort(key=lambda img_pair: abs(img_pair.location_full - center_mm))
+            slices_in_range = slices_in_range[:max_slices]
+            # stats_min_loc = slices_in_range[0]
+            # stats_max_loc = slices_in_range[-1]
 
         # to calc mean, create lists made up of all pixels value in rois across all slices in range
-        roi_counts = {}
-        for count in num_rois_in_images:
-            roi_counts[count] = roi_counts.get(count, 0) + 1
-        num_rois_mode = max(roi_counts, key=roi_counts.get)
+        roi_counts = np.bincount(num_rois_in_images)
+        num_rois_mode = int(np.argmax(roi_counts))
         masked_values = [[] for _ in range(num_rois_mode)]
-        for img_pair in self.image_pairs:
-            if (img_pair.location_full > stats_max_loc) or (img_pair.location_full < stats_min_loc):
-                continue
+        for img_pair in slices_in_range:
             if not img_pair.has_rois():
                 continue
-            for roi_index, roi in enumerate(img_pair.rois):
-                if roi_index >= num_rois_mode:
-                    break
-                mask = np.zeros(img_pair.pdff_img.shape, dtype=np.uint8)
-                cv2.circle(mask, (int(roi[CX]), int(roi[CY])), int(roi[CR]), 1, -1)
-                vals = img_pair.pdff_img[mask == 1]
-                masked_values[roi_index].extend(vals.tolist())
+            img_pair.slice_stats() # this is already done but re-do should be ok
+            if img_pair.pdff_stats == None:
+                    continue
+            for indx, samples in enumerate(img_pair.pdff_stats.samples):
+                masked_values[indx].extend(samples.tolist())
+        # todo: do something with these masked_values
+        return 
 
-        results_dict = {
-            "means": [],
-            "stddevs": [],
-            "medians": [],
-            "mins": [],
-            "maxs": [],
-            "samples": [],
-        }
-        for roi_vals in masked_values:
+
+class FWStats:
+    def __init__(self, image:np.ndarray, rois:np.ndarray):
+        n = len(rois)
+        self.num_samples = np.zeros(n, dtype=int)
+        self.samples = np.empty(n, dtype=object)
+        self.samples[:] = [[] for _ in range(n)]
+        self.roi_stats:list[RoiStats | None] = [None] * n
+        self.means   = np.zeros(n, dtype=float)
+        self.stddevs = np.zeros(n, dtype=float)
+        self.medians = np.zeros(n, dtype=float)
+        self.iqrs    = np.empty(n, dtype=object)
+        self.mins    = np.zeros(n, dtype=float)
+        self.maxs    = np.zeros(n, dtype=float)
+        self.renormalized = False
+        self.renormalized_divisor = 1
+
+        for i, roi in enumerate(rois):
+            roi_stats               = RoiStats(image, roi)
+            self.roi_stats[i]       = roi_stats
+            self.num_samples[i]     = roi_stats.num_samples
+            self.samples[i]         = roi_stats.samples
+            self.means[i]           = roi_stats.mean
+            self.stddevs[i]         = roi_stats.stddev
+            self.medians[i]         = roi_stats.median
+            self.iqrs[i]            = roi_stats.iqr
+            self.mins[i]            = roi_stats.min
+            self.maxs[i]            = roi_stats.max
+
+    @classmethod
+    def from_values(cls, values_by_roi:list[list[float]]) -> FWStats:
+        obj = cls.__new__(cls)
+        for i, roi_vals in enumerate(values_by_roi):
             if not roi_vals:
-                results_dict["means"].append(float("nan"))
-                results_dict["stddevs"].append(float("nan"))
-                results_dict["medians"].append(float("nan"))
-                results_dict["mins"].append(float("nan"))
-                results_dict["maxs"].append(float("nan"))
-                results_dict["samples"].append(0)
                 continue
             np_vals = np.asarray(roi_vals)
-            results_dict["means"].append(float(np.mean(np_vals)))
-            results_dict["stddevs"].append(float(np.std(np_vals)))
-            results_dict["medians"].append(float(np.median(np_vals)))
-            results_dict["mins"].append(float(np.min(np_vals)))
-            results_dict["maxs"].append(float(np.max(np_vals)))
-            results_dict["samples"].append(int(np_vals.size))
-        if len(results_dict["means"]) > 2:
-            results_dict = renormalize_stats(results_dict)
-        return results_dict
+            obj.means[i]        = float(np.mean(np_vals))
+            obj.stddevs[i]      = float(np.std(np_vals))
+            obj.medians[i]      = float(np.median(np_vals))
+            obj.mins[i]         = float(np.min(np_vals))
+            obj.maxs[i]         = float(np.max(np_vals))
+            obj.samples[i]      = np_vals
+            obj.num_samples[i]  = int(np_vals.size)
+        return obj
+
+    def to_dict(self) -> dict:
+        data = {
+            "means": self.means.tolist(),
+            "stddevs": self.stddevs.tolist(),
+            "medians": self.medians.tolist(),
+            "mins": self.mins.tolist(),
+            "maxs": self.maxs.tolist(),
+            "num_samples": [int(x) for x in self.num_samples],
+            "values": self.samples.tolist(),
+            "renormalized": self.renormalized,
+        }
+        return data
+    
+    def renormalize(self):
+        means = self.means
+        self.renormalized = bool(np.count_nonzero(means > 100) > (means.size / 2))
+        self.renormalized_divisor = 1
+        if self.renormalized:
+            divisors = [1, 10, 100, 1000]
+            max_mean = float(np.max(means))
+            for d in divisors:
+                if max_mean < d * 120:
+                    self.renormalized_divisor = d
+                    break
+            self.means   = self.means / self.renormalized_divisor
+            self.stddev = self.medians / self.renormalized_divisor
+            self.medians = self.medians / self.renormalized_divisor
+            self.iqrs = self.iqrs / self.renormalized_divisor
+            self.mins = self.medians / self.renormalized_divisor
+            self.maxs = self.medians / self.renormalized_divisor
+            
+
+
+class RoiStats:
+    def __init__(self, image:np.ndarray, roi:np.ndarray):
+        self.roi = roi
+        self.num_samples    = 0
+        self.samples        = np.zeros
+        self.mean           = np.nan
+        self.stddev         = np.nan
+        self.median         = np.nan    
+        self.iqr            = np.nan
+        self.min            = np.nan
+        self.max            = np.nan
+
+        # if not image:
+        #     return
+        # if not roi:
+        #     return
+
+        center_x = roi[0]
+        center_y = roi[1]
+        radius   = roi[2]
+        h, w = image.shape[:2]
+        y, x = np.ogrid[:h, :w]
+        mask = (x - center_x) ** 2 + (y - center_y) ** 2 <= radius ** 2
+        vals = image[mask]
+        if vals.size > 0:
+            self.samples        = vals
+            self.num_samples    = len(vals)
+            self.mean           = vals.mean()
+            self.stddev         = vals.std()
+            self.median         = np.median(vals)
+            self.iqr            = np.percentile(vals, (25, 75))
+            self.min            = np.min(vals)
+            self.max            = np.max(vals)
 
 
 class FWImagePair:
@@ -263,11 +413,7 @@ class FWImagePair:
         self.location_full:float = location_full
         self.location:int = int(location_full)
         self.pixel_spacing = pixel_spacing
-
-    # def set_pixel_spacing(self):
-    #     self.pixel_spacing = self.pdff.PixelSpacing[0]
-    #     if self.pdff.PixelSpacing[0] != self.water.PixelSpacing[0]:
-    #         logger.warning(f"Pixel spacing mismatch! {self.pdff.SeriesDescription}")
+        self.pdff_stats:FWStats|None = None
 
     def has_circles(self):
         return len(self.circles) != 0
@@ -275,63 +421,27 @@ class FWImagePair:
     def has_rois(self):
         return len(self.rois) != 0
     
-    def slice_stats(self) -> dict:
-        # Compute the mean, median, and standard dev of a pdff/water pair.
-        # img should be a single slice of the img_pack_data, with pdff, water and rois
-        # Output: pdff_means:[], pdff_stddevs:[], pdff_medians:[] - lists of mean, stddev, median
-        # for the circles
-        stats = {}
+    def slice_stats(self):
+        '''
+        Compute the mean, median, and standard dev of a pdff pair.
+        Output: self.pdff_stats computed from rois
+        '''
         # default values are -10
-        if self.has_rois() is False:
-            roi_count = len(self.rois)
-            stats["pdff_means"] = [-10] * roi_count
-            stats["pdff_medians"] = [-10] * roi_count
-            stats["pdff_stddevs"] = [0] * roi_count
-            return stats
-        # apply rois to PDFF
-        pdff_means = []
-        pdff_medians = []
-        pdff_stddevs = []
-        for r in self.rois:
-            # make a circle mask that can be applied to pdff
-            mask = np.zeros(self.pdff_img.shape, dtype=np.uint8)
-            cv2.circle(mask, (r[0], r[1]), r[2], color=1, thickness=-1) # solid circle (thickness = -1) filled with  1
-            # calculate mean and median
-            mean_pdff   = masked_mean(self.pdff_img, mask)
-            median_pdff = masked_median(self.pdff_img, mask)
-            stddev_pdff = masked_stddev(self.pdff_img, mask)
-            pdff_means.append(mean_pdff)
-            pdff_medians.append(median_pdff)
-            pdff_stddevs.append(stddev_pdff)
-        stats["pdff_means"] = pdff_means
-        stats["pdff_medians"] = pdff_medians
-        stats["pdff_stddevs"] = pdff_stddevs
-        return stats
-            
-def apply_mask(image, mask) -> list:
-    np_img = np.array(image)
-    vals = np_img[mask == 1].tolist() # need to be a list? or leave as np.array??
-    return vals
+        if not self.has_rois():
+            self.pdff_stats = None
+            return
+        self.sort_circles_by_x_coord()
+        self.pdff_stats = FWStats(self.pdff_img, self.rois)
+        pause = True
+    
+    def sort_circles_by_x_coord(self):
+        if self.has_circles():
+            self.circles = sorted(self.circles, key=lambda c: c[0]) # circles is a list
+        if self.has_rois():
+            self.rois = self.rois[np.argsort(self.rois[:, 0])] #rois is a ndarray
+        # sorted(self.rois   , key=lambda c: c[0]) # AVOID will collapse ndarray
 
-def masked_mean(image, mask) -> float|None:
-    vals = apply_mask(image, mask)
-    if len(vals) == 0:
-        return None
-    return sum(vals) / len(vals)
 
-def masked_median(image, mask) -> float|None:
-    vals = apply_mask(image, mask)
-    if len(vals)  == 0:
-        return None
-    if len(vals) % 2 == 0:
-        return (vals[len(vals) // 2 - 1] + vals[len(vals) // 2]) / 2
-    return  vals[len(vals) // 2 ]
-
-def masked_stddev(image, mask) -> float|None:
-    vals = apply_mask(image, mask)
-    if len(vals)  == 0:
-        return None
-    return  (np.std(vals))
 
 ''' 
 required dicom tags
@@ -430,25 +540,6 @@ def extract_dicom_tags(dataset:pydicom.Dataset|None) -> dict:
     return info
 
 
-def get_values_in_roi(img:np.ndarray, r) -> list:
-    mask = np.zeros(img.shape, dtype=np.uint8)
-    cv2.circle(mask, (r[CX], r[CY]), r[CR], 1, -1) # solid circle (thickness = -1) filled with  1
-    vals = apply_mask(img, mask)
-    return vals
-
-def renormalize_stats(results_dict:dict) -> dict:
-    # check mean value of the middle vial; it should always be 30% (20-40) if we find it is >101, renormalize by dividing by 100
-    if results_dict["means"][2] < 101:
-        results_dict["renormalized"] = False
-        return results_dict
-    results_dict["renormalized"] = True
-    for key in results_dict.keys():
-        if key == "renormalized": continue
-        if key == "samples": continue
-        results_dict[key] = [x/100 for x in results_dict[key]]
-    return results_dict
-
-
 # def plot_circles_ndarray(img, circles, name='image', waitkey=1):
 #     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
 #     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
@@ -458,3 +549,72 @@ def renormalize_stats(results_dict:dict) -> dict:
 #     cv2.imshow(name, cimg)
 #     cv2.waitKey(waitkey)
 #     cv2.destroyAllWindows()
+
+
+def pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
+    '''
+    Create an image that has water/pdff pairs (left to right)
+    and up to three rows (at which point it adds another column)
+    '''
+    if len(img_pairs) < 1:
+        return
+    channels = 3
+    arr_rows = min(len(img_pairs), 3)
+    arr_cols = (len(img_pairs) + arr_rows - 1) // arr_rows
+    cimg_setup = cv2.cvtColor(np.uint8(img_pairs[0].water_img), cv2.COLOR_GRAY2BGR) 
+    img_h, img_w, channels = cimg_setup.shape
+
+    pair_w = img_w * 2
+    canvas = np.zeros((img_h * arr_rows, pair_w * arr_cols, channels), dtype=np.uint8)
+
+    # prepare normalzation
+    watr_min, watr_max, pdff_min, pdff_max = normalization_values(img_pairs)
+
+    def normalize_to_uint8(img, vmin, vmax):
+        if vmin is None or vmax is None or vmax <= vmin:
+            return np.zeros_like(img, dtype=np.uint8)
+        scale = 255.0 / (vmax - vmin)
+        img_f = img.astype(np.float32, copy=False)
+        return np.uint8(np.clip((img_f - vmin) * scale, 0, 255))
+
+    for i, img_pair in enumerate(img_pairs):
+        cimg_watr = normalize_to_uint8(img_pair.water_img, watr_min, watr_max)
+        cimg_watr = cv2.cvtColor(cimg_watr, cv2.COLOR_GRAY2BGR)
+        cimg_pdff = normalize_to_uint8(img_pair.pdff_img, pdff_min, pdff_max)
+        cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
+        # draw circles around water vials
+        if img_pair.has_circles():
+            np_circles = np.uint16(np.around(img_pair.circles))
+            for c in np_circles:
+                cv2.circle(cimg_watr,(int(c[0]),int(c[1])),c[2],(0,0,255),1)
+        # draw ROIs in pdff vials
+        if img_pair.has_rois():
+            np_rois = np.uint16(np.around(img_pair.rois))
+            for j, c in enumerate(np_rois):
+                cv2.circle(cimg_pdff, (int(c[0]),int(c[1])),c[2],(255,255,0),1)
+
+        row = i % arr_rows
+        col = i // arr_rows
+        y0 = row * img_h
+        x0 = col * pair_w
+        canvas[y0:y0 + img_h,           x0:x0 + img_w]  = cimg_watr
+        canvas[y0:y0 + img_h,   img_w + x0:x0 + pair_w] = cimg_pdff
+    return canvas
+
+def normalization_values(img_pairs):
+    watr_min = None
+    watr_max = None
+    pdff_min = None
+    pdff_max = None
+    for img_pair in img_pairs:
+        if img_pair.water_img.size:
+            w_min = float(np.min(img_pair.water_img))
+            w_max = float(np.max(img_pair.water_img))
+            watr_min = w_min if watr_min is None else min(watr_min, w_min)
+            watr_max = w_max if watr_max is None else max(watr_max, w_max)
+        if img_pair.pdff_img.size:
+            p_min = float(np.min(img_pair.pdff_img))
+            p_max = float(np.max(img_pair.pdff_img))
+            pdff_min = p_min if pdff_min is None else min(pdff_min, p_min)
+            pdff_max = p_max if pdff_max is None else max(pdff_max, p_max)
+    return watr_min,watr_max,pdff_min,pdff_max

@@ -46,9 +46,12 @@ def find_pack_bounding_box(rois:list[list], padding=0) -> tuple[tuple,tuple]:
 def create_hepplus_img(fw:FWSeries) -> np.ndarray:
     image_pairs_in_span = fw.img_pairs_in_span(min_loc=fw.stats_min_loc, max_loc=fw.stats_max_loc)
     pack_arr_img = cropped_pack_array(image_pairs_in_span)
-    plot_utils.display_cimg(pack_arr_img)
-    save_img_totemp(fw, pack_arr_img)
+    # plot_utils.display_cimg(pack_arr_img)
+    # save_img_totemp(fw, pack_arr_img)
     return pack_arr_img
+
+
+
 
 def cropped_pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
     cols = 3

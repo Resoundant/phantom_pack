@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from copy import deepcopy
 import matplotlib.pyplot as plt
-from fw import FWSeries, FWImagePair
+from fw import FWSeries
 
 def display_image(img, name='image', waitkey=0):
     im2=deepcopy(img)
@@ -87,6 +87,7 @@ def plot_image(img, name='image', waitkey=1):
     cv2.waitKey(waitkey)
     cv2.destroyAllWindows()
 
+
 def plot_circles_list(img, circles, name='image', waitkey=1):
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
@@ -97,6 +98,7 @@ def plot_circles_list(img, circles, name='image', waitkey=1):
     cv2.waitKey(waitkey)
     cv2.destroyAllWindows()
 
+
 def plot_circles_ndarray(img, circles, name='image', waitkey=1):
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
@@ -106,6 +108,7 @@ def plot_circles_ndarray(img, circles, name='image', waitkey=1):
     cv2.imshow(name, cimg)
     cv2.waitKey(waitkey)
     cv2.destroyAllWindows()
+
 
 def plot_selected_image(img_data:dict, dest_filepath:str=None, display_image=False):
     ''' save pdff and water with ROIs on them'''

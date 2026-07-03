@@ -5,7 +5,6 @@ import numpy as np
 import cv2
 import datetime
 from image_labels import identifying_labels
-from statistics import mode
 from load_dicoms import load_dicoms
 from circle_grouping import find_circle_groups
 from circle_finder import circle_finder_water
@@ -58,7 +57,7 @@ def phantom_pack(
         return {}
 
     # find pdff/water pairs; img_packs = [[pair1],[pair2],...]
-    fw_series = find_fw_pairs(labeled_dicoms) #todo: rename variables to clarify
+    fw_series = find_fw_pairs(labeled_dicoms) 
     print_paired_summary(fw_series, directory_path)
 
     # save summary of loaded data: each pdff/water series and description
@@ -90,12 +89,12 @@ def phantom_pack(
             logger.warning(f"No pack midpoint found for series {fw.series_number_pdff} {fw.series_description_pdff}")
             continue
 
-        try:
-            fw.stats_min_loc = fw.pack_midpoint-span_mm/2
-            fw.stats_max_loc = fw.pack_midpoint+span_mm/2
-        except: 
-            logger.warning("ERROR computing min and max slice location")
-            return {}
+        # try:
+        #     fw.stats_min_loc = fw.pack_midpoint-span_mm/2
+        #     fw.stats_max_loc = fw.pack_midpoint+span_mm/2
+        # except: 
+        #     logger.warning("ERROR computing min and max slice location")
+        #     return {}
         
         results = fw.compute_and_save_results(span_mm, output_dir)
     return results
@@ -286,7 +285,7 @@ def get_px_spacing(ff:pydicom.Dataset, water:pydicom.Dataset) -> float:
     if w_ps[0] != w_ps[1] or f_ps[0] != f_ps[1] or w_ps[0] != f_ps[0]:
         logger.warning(f"WARNING: PixelSpacing mismatch for: {ff.SeriesDescription} {ff.SeriesNumber} {ff.SliceLocation}")
         return 0
-    return w_ps
+    return w_ps[0]
 
 
 def vial_sizes_in_px(vial_radius, radius_tolerance, px_size):
@@ -294,20 +293,6 @@ def vial_sizes_in_px(vial_radius, radius_tolerance, px_size):
     max_radius = int(vial_radius/px_size) + int(np.ceil(radius_tolerance/px_size))
     min_vail_sep = vial_radius/px_size
     return min_radius,max_radius,min_vail_sep
-
-
-def sort_circles_by_x_coord(circles:np.ndarray):
-    x_locs = []
-    for c in circles:
-        x_locs.append(c[0])
-    x_locs = sorted(x_locs)
-    sorted_circles = []
-    for loc in x_locs:
-        for c in circles:
-            if c[0] == loc:
-                sorted_circles.append(c)
-                break
-    return sorted_circles
 
 
 def print_mean_median_values(pdff_means, pdff_medians):
