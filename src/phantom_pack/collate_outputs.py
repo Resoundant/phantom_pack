@@ -1,6 +1,6 @@
 #!python
 import os
-import sys
+import argparse
 import json
 import glob
 import pandas as pd
@@ -74,10 +74,17 @@ def collate_outputs(top_dir):
     df = pd.concat(df_list, ignore_index=True)
     df.to_excel(output_file)
 
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Collate Phantom Pack JSON outputs into an Excel workbook.")
+    parser.add_argument("top_directory", help="Directory containing Phantom Pack JSON result files.")
+    args = parser.parse_args(argv)
+
+    collate_outputs(args.top_directory)
+    return 0
+
+
 # sys.argv= ['this', r'C:\testdata\PhantomPack']
 if __name__ == '__main__':
-    # collect all .json files in top_dir, recursively
-    top_dir = sys.argv[1]
-    collate_outputs(top_dir)
+    raise SystemExit(main())
 
 

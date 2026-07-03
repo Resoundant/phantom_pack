@@ -1,9 +1,9 @@
 import os
 import cv2
 import numpy as np
-from fw import FWSeries, FWImagePair
+from .fw import FWSeries, FWImagePair
 from copy import deepcopy
-import plot_utils
+from . import plot_utils
 
 def find_pack_bounding_box(rois:list[list], padding=0) -> tuple[tuple,tuple]:
     """

@@ -1,16 +1,16 @@
 import os
-import sys
+import argparse
 import pydicom
 import numpy as np
 import cv2
 import datetime
-from image_labels import identifying_labels
-from load_dicoms import load_dicoms
-from circle_grouping import find_circle_groups
-from circle_finder import circle_finder_water
-from fw import FWSeries, FWImagePair
+from .image_labels import identifying_labels
+from .load_dicoms import load_dicoms
+from .circle_grouping import find_circle_groups
+from .circle_finder import circle_finder_water
+from .fw import FWSeries, FWImagePair
 
-from pp_config import PP_CONST
+from .pp_config import PP_CONST
 import logging
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,9 @@ TIMESTAMP = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
 
 
 def phantom_pack(
-        labeled_dicoms:list[pydicom.Dataset],
+        labeled_dicoms:list[pydicom.Dataset] | str | os.PathLike,
+        directory_path: str | os.PathLike | None = None,
+        output_dir: str | os.PathLike | None = None,
         vial_radius = PP_CONST["VIAL_RADIUS_MM"],
         radius_tolerance = PP_CONST["RADIUS_TOLERANCE_MM"], 
         vert_align_tol = PP_CONST["VERT_ALIGN_TOLERANCE_MM"],
@@ -41,16 +43,30 @@ def phantom_pack(
         span_mm = PP_CONST["ANALYSIS_SPAN_MM"],
     ) -> dict:
     '''
-    process all pdff data in directory_path
+    process all labeled pdff data
     return a list of dictionaries containing results for each pdff/water pair
     '''
+    if isinstance(labeled_dicoms, (str, os.PathLike)):
+        return process_directory(
+            labeled_dicoms,
+            vial_radius=vial_radius,
+            radius_tolerance=radius_tolerance,
+            vert_align_tol=vert_align_tol,
+            roi_radius=roi_radius,
+            span_mm=span_mm,
+            output_dir=output_dir,
+        )
 
     if labeled_dicoms == None or len(labeled_dicoms) == 0:
         print("[phantom_pack] ERROR: Input data is empty")
         return {} 
 
     # prepare output directory
-    output_dir = os.path.join(directory_path, PP_CONST["OUTPUT_DIR"])
+    if output_dir is None:
+        output_parent = os.fspath(directory_path) if directory_path is not None else os.getcwd()
+        output_dir = os.path.join(output_parent, PP_CONST["OUTPUT_DIR"])
+    else:
+        output_dir = os.fspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
     if not os.path.isdir(output_dir) or not os.access(output_dir, os.W_OK):
         print(f"[phantom_pack] ERROR: Output directory not writable: {output_dir}")
@@ -58,7 +74,7 @@ def phantom_pack(
 
     # find pdff/water pairs; img_packs = [[pair1],[pair2],...]
     fw_series = find_fw_pairs(labeled_dicoms) 
-    print_paired_summary(fw_series, directory_path)
+    print_paired_summary(fw_series, directory_path or "provided datasets")
 
     # save summary of loaded data: each pdff/water series and description
     log_seriesdata_to_file(output_dir, fw_series)
@@ -406,18 +422,31 @@ def load_and_label(directory_path) -> list[pydicom.Dataset]:
     return all_dicoms
 
 
-if __name__ == "__main__":
-    directory_path = sys.argv[1]
+def process_directory(directory_path: str | os.PathLike, **kwargs) -> dict:
+    directory_path = os.fspath(directory_path)
     if not os.path.isdir(directory_path):
         print(f"Could not find directory {directory_path}")
-        exit(1)
+        return {}
     logfile = os.path.join(directory_path, "phantom_pack.log")
     logging.basicConfig(filename=logfile, level=logging.INFO)
     logger.info(f"Processing {directory_path}")
     labeled_dicoms = load_and_label(directory_path)
-    results = phantom_pack(labeled_dicoms)
+    results = phantom_pack(labeled_dicoms, directory_path=directory_path, **kwargs)
+    return results
 
-    x=1
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Find and analyze Calimetrix phantom pack vials in DICOM images.")
+    parser.add_argument("input_directory", help="Directory containing one patient-exam of DICOM files.")
+    args = parser.parse_args(argv)
+
+    results = process_directory(args.input_directory)
+    return 0 if results else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
     # testimg_path = r'C:\testdata\PhantomPack\PQ024\SER00090\IMG00019.dcm'
     # directory_path = os.path.dirname(testimg_path)4
     # ds = pydicom.dcmread(testimg_path)

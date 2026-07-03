@@ -1,8 +1,8 @@
 import cv2
 import numpy as np
-import plot_utils
-from pack_simulators import simulate_phantom_pack
-from phantom_pack import find_packs_in_images, composite_statistics
+from phantom_pack import plot_utils
+from phantom_pack.pack_simulators import simulate_phantom_pack
+from phantom_pack.phantom_pack import find_packs_in_images
 
 
 def create_test_image() -> np.ndarray:
@@ -36,6 +36,6 @@ if __name__ == "__main__":
     span_mm = 15
     fw_series.stats_min_loc = fw_series.pack_midpoint - span_mm/2
     fw_series.stats_max_loc   = fw_series.pack_midpoint + span_mm/2
-    dict_results = composite_statistics(fw_series, fw_series.stats_min_loc, fw_series.stats_max_loc)
+    dict_results = fw_series.composite_statistics(fw_series.pack_midpoint, span_mm)
 
     x=1

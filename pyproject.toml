@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling >= 1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phantom-pack"
+version = "0.1.0"
+description = "Find and analyze Calimetrix phantom pack vials in PDFF and water DICOM images."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "numpy",
+    "opencv-python",
+    "Pillow",
+    "pydicom",
+    "matplotlib",
+    "pandas",
+    "openpyxl",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.scripts]
+phantom-pack = "phantom_pack.phantom_pack:main"
+phantom-pack-batch = "phantom_pack.batch_process:main"
+phantom-pack-collate = "phantom_pack.collate_outputs:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/phantom_pack"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/README.md",
+    "/LICENSE",
+    "/requirements.txt",
+    "/pyproject.toml",
+]

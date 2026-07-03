@@ -1,8 +1,9 @@
+import os
 import cv2
 import numpy as np
 from copy import deepcopy
 import matplotlib.pyplot as plt
-from fw import FWSeries
+from .fw import FWSeries
 
 def display_image(img, name='image', waitkey=0):
     im2=deepcopy(img)

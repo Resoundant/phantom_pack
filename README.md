@@ -9,22 +9,28 @@ Analysis includes mean, median, standard deviation, min and max values, calculat
 
 Python 3.10 or 3.11 recommended.
 
-`pip install -r requirements.txt`
+From the repository root:
+
+`pip install -e .`
+
+To build installable distributions:
+
+`python -m build`
 
 ### Run
-`python phantom_pack.py <input_directory>`
+`phantom-pack <input_directory>`
 
 results will be in <input_directory>/phatompack_results/
 
 To batch process a folder than contains multiple patient-exams:
 
-`python phantom_pack_batch.py <top_directory>`
+`phantom-pack-batch <top_directory>`
 
 will loop over each subfolder in <top_directory> as if running individually
 
 To cellect up a bunch of folders of data into a spreadhsheet after running a batch, do 
 
-`python collate_data.py <top_directory>`
+`phantom-pack-collate <top_directory>`
 
 to create <top_directory>/output.xlsx
 

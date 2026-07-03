@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 import numpy as np
 import cv2
@@ -5,7 +7,7 @@ import pydicom
 import os
 import json
 from pathlib import Path
-from pp_config import DICOM_TAG_LIST
+from .pp_config import DICOM_TAG_LIST
 import matplotlib.pyplot as plt
 
 

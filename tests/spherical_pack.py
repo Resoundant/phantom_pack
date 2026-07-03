@@ -1,6 +1,6 @@
-import pack_simulators as ps
-import circle_finder as cu
-import masking 
+from phantom_pack import pack_simulators as ps
+from phantom_pack import circle_finder as cu
+from phantom_pack import masking
 
 if __name__ == "__main__":
     pdff, water = ps.simulate_sphere(randomize=True)
