@@ -66,32 +66,48 @@ def simulate_sphere(randomize=False) -> tuple[np.ndarray, np.ndarray]:
             cv2.circle(water, (x, y), circle_radius+wall_thick, 0, wall_thick)
     return pdff, water
 
-def simulate_phantom_pack()-> FWSeries:
+def simulate_phantom_pack(
+        num_slices:int = 64, 
+        slice_thickness_mm:float = 3,
+        pack_start_slice:int = 10,
+        pdff_variance:float = 0,
+        pdff_noise:float = 0,
+        water_noise:float = 0   
+    )-> FWSeries:
     fw_series = FWSeries(1)
     fw_series.series_description_pdff = "PDFF TEST SERIES"
     fw_series.series_description_water = "WATER TEST SERIES"
     fw_series.series_number_water = 2
-    total_images = 40
-    pack_start_image = 10
-    pack_image_count = 20
-    slice_thickness = 5
+    total_images = num_slices
+    pack_image_count = PP_CONST.pack_length_mm / slice_thickness_mm
     pixel_spacing = IMG_FOV_MM/IMG_RESOLUTION
 
     for i in range(total_images):
-        pdff_img = np.empty((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
-        water_img = np.empty((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
-        if i >= pack_start_image and i < pack_start_image + pack_image_count:
-            sim_pack_circles(pdff_img, water_img, pixel_spacing)
-        fw_pair = FWImagePair(pdff_img, water_img, pixel_spacing, location_full=i*slice_thickness)
+        pdff_img = np.zeros((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
+        water_img = np.zeros((IMG_RESOLUTION, IMG_RESOLUTION), dtype=np.float64)
+        if i >= pack_start_slice and i < pack_start_slice + pack_image_count:
+            sim_pack_circles(pdff_img, water_img, pixel_spacing, pdff_variance=pdff_variance)
+        pdff_img = add_gaussian_noise(pdff_img, mean=0, std_dev = pdff_noise)
+        water_img = add_gaussian_noise(water_img, mean=0, std_dev = water_noise)
+        fw_pair = FWImagePair(pdff_img, water_img, pixel_spacing, location_full=i*slice_thickness_mm)
         fw_series.image_pairs.append(fw_pair)
+
+    setattr(fw_series, "KNOWN_first_slice", pack_start_slice)
+    setattr(fw_series, "KNOWN_num_slices", pack_image_count)
+
     return fw_series
 
-def sim_pack_circles(pdff_img:np.ndarray, water_img:np.ndarray, pixel_spacing):
+def sim_pack_circles(
+        pdff_img:np.ndarray,
+        water_img:np.ndarray, 
+        pixel_spacing:float,
+        pdff_variance:float = 0, # percent    
+    ):
     # Valid aligned group (all values are pixels)
     img_size, _ = pdff_img.shape
     # all values in px
-    radius = PP_CONST['VIAL_RADIUS_MM']/pixel_spacing 
-    spacing = PP_CONST['VIAL_SEP_MM']/pixel_spacing
+    radius = PP_CONST.vial_radius_mm/pixel_spacing
+    spacing = PP_CONST.vial_separation_mm/pixel_spacing
     base_x, base_y = int(img_size/2-2*spacing), int(3*img_size/4)
     radius_range_px = 1
     loc_range_px = 1
@@ -99,12 +115,13 @@ def sim_pack_circles(pdff_img:np.ndarray, water_img:np.ndarray, pixel_spacing):
     circle_data = []
     pdff_vals = [40, 30, 20, 10, 0]
     for i in range(len(pdff_vals)):
+        noisy_pdff = pdff_vals[i] + random.uniform(-pdff_variance, pdff_variance)
         circle_data.extend([
             (
             int(base_x + i * spacing + random.uniform(-loc_range_px, loc_range_px)), # x loc
             int(base_y + random.uniform(-loc_range_px, loc_range_px) + (i * spacing * np.tan(np.deg2rad(linear_skew)))), # y loc
             int(radius + random.uniform(-radius_range_px, radius_range_px)), # radius
-            pdff_vals[i] # pdff %
+            noisy_pdff # pdff %
             ),
         ])
     
@@ -116,7 +133,7 @@ def sim_pack_circles(pdff_img:np.ndarray, water_img:np.ndarray, pixel_spacing):
     # plot_utils.display_image(water_img, "Water")
     return 
 
-def add_gaussian_noise(image:np.ndarray, mean=0, std_dev=10):
+def add_gaussian_noise(image:np.ndarray, mean:float=0, std_dev:float=10):
     """
     Add Gaussian noise to an image.
 
@@ -134,7 +151,9 @@ def add_gaussian_noise(image:np.ndarray, mean=0, std_dev=10):
     """
     noise = np.random.normal(mean, std_dev, image.shape)
     noisy_image = image + noise
-    image_min = np.iinfo(image.dtype).min
-    image_max = np.iinfo(image.dtype).max
+    dtype = image.dtype
+    type_info = np.finfo(dtype) if dtype.kind == "f" else np.iinfo(dtype)
+    image_min = type_info.min
+    image_max = type_info.max
     noisy_image = np.clip(noisy_image, image_min, image_max).astype(image.dtype)
     return noisy_image

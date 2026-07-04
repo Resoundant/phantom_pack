@@ -12,7 +12,18 @@ def circle_finder_gen(img:np.ndarray, minDist:float=0.01, param1:float=300, para
     return circles
 
 
-def circle_finder_water(img:np.ndarray, minDist:float=0.01, param1:float=300, param2:float=10, minRadius:int=3, maxRadius:int=50) -> np.ndarray:
+def circle_finder_water(
+        img:np.ndarray, 
+        minDist:float=0.01,
+        param1:float=300, 
+        param2:float=10, 
+        minRadius:int=3,
+        maxRadius:int=50,
+        blur_size:int=3    
+    ) -> np.ndarray:
+    # blur
+    img = cv2.GaussianBlur(img, (blur_size,blur_size), 1.5)
+    # find circles
     circles = cv2.HoughCircles(img, cv2.HOUGH_GRADIENT, 1, minDist, param1=param1, param2=param2, minRadius=minRadius, maxRadius=maxRadius)
     circles = convert_circle_array_to_list(circles)
     return circles

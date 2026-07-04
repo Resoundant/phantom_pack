@@ -80,6 +80,7 @@ class FWSeries:
         self.pack_last_slice_loc = max(pack_locs)
         self.pack_first_slice = all_locs.index(self.pack_first_slice_loc)
         self.pack_last_slice = all_locs.index(self.pack_last_slice_loc)
+        self.num_slices_with_circles = len(pack_locs)
 
 
     def sort_data_by_sliceloc(self):
@@ -168,7 +169,7 @@ class FWSeries:
 
     def create_save_hepplus_img_array(self, filepath=None) -> np.ndarray:
         image_pairs_in_span = self.img_pairs_in_span(min_loc=self.stats_min_loc, max_loc=self.stats_max_loc)
-        pack_arr_img = pack_array(image_pairs_in_span)
+        pack_arr_img = gen_pack_array_image(image_pairs_in_span)
         # plot_utils.display_cimg(pack_arr_img)
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         cv2.imwrite(filepath, pack_arr_img)
@@ -416,6 +417,7 @@ class FWImagePair:
         self.location:int = int(location_full)
         self.pixel_spacing = pixel_spacing
         self.pdff_stats:FWStats|None = None
+        self.dbg_found_circles = np.array([])
 
     def has_circles(self):
         return len(self.circles) != 0
@@ -553,16 +555,17 @@ def extract_dicom_tags(dataset:pydicom.Dataset|None) -> dict:
 #     cv2.destroyAllWindows()
 
 
-def pack_array(img_pairs:list[FWImagePair]) -> np.ndarray:
+def gen_pack_array_image(img_pairs:list[FWImagePair], max_rows=0) -> np.ndarray:
     '''
-    Create an image that has water/pdff pairs (left to right)
+    Create an image that has water/pdff pairs (left/right)
     and up to three rows (at which point it adds another column)
     '''
     if len(img_pairs) < 1:
         return
     channels = 3
-    arr_rows = min(len(img_pairs), 3)
-    arr_cols = (len(img_pairs) + arr_rows - 1) // arr_rows
+    num_pairs = len(img_pairs)
+    arr_rows = num_pairs if max_rows == 0 else min(num_pairs, max_rows)
+    arr_cols = (num_pairs + arr_rows - 1) // arr_rows
     cimg_setup = cv2.cvtColor(np.uint8(img_pairs[0].water_img), cv2.COLOR_GRAY2BGR) 
     img_h, img_w, channels = cimg_setup.shape
 

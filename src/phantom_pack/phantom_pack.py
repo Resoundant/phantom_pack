@@ -36,11 +36,11 @@ def phantom_pack(
         labeled_dicoms:list[pydicom.Dataset] | str | os.PathLike,
         directory_path: str | os.PathLike | None = None,
         output_dir: str | os.PathLike | None = None,
-        vial_radius = PP_CONST["VIAL_RADIUS_MM"],
-        radius_tolerance = PP_CONST["RADIUS_TOLERANCE_MM"], 
-        vert_align_tol = PP_CONST["VERT_ALIGN_TOLERANCE_MM"],
-        roi_radius = PP_CONST["ROI_RADIUS_MM"],
-        span_mm = PP_CONST["ANALYSIS_SPAN_MM"],
+        vial_radius = PP_CONST.vial_radius_mm,
+        radius_tolerance = PP_CONST.radius_tolerance, 
+        vert_align_tol = PP_CONST.alignment_tolerance,
+        roi_radius = PP_CONST.roi_radius_mm,
+        span_mm = PP_CONST.analysis_span_mm,
     ) -> dict:
     '''
     process all labeled pdff data
@@ -49,12 +49,12 @@ def phantom_pack(
     if isinstance(labeled_dicoms, (str, os.PathLike)):
         return process_directory(
             labeled_dicoms,
-            vial_radius=vial_radius,
-            radius_tolerance=radius_tolerance,
-            vert_align_tol=vert_align_tol,
-            roi_radius=roi_radius,
-            span_mm=span_mm,
-            output_dir=output_dir,
+            vial_radius = vial_radius,
+            radius_tolerance = radius_tolerance,
+            vert_align_tol = vert_align_tol,
+            roi_radius = roi_radius,
+            span_mm = span_mm,
+            output_dir = output_dir,
         )
 
     if labeled_dicoms == None or len(labeled_dicoms) == 0:
@@ -64,7 +64,7 @@ def phantom_pack(
     # prepare output directory
     if output_dir is None:
         output_parent = os.fspath(directory_path) if directory_path is not None else os.getcwd()
-        output_dir = os.path.join(output_parent, PP_CONST["OUTPUT_DIR"])
+        output_dir = os.path.join(output_parent, PP_CONST.output_dir)
     else:
         output_dir = os.fspath(output_dir)
     os.makedirs(output_dir, exist_ok=True)
@@ -194,11 +194,11 @@ def create_negative_image(img):
 
 def find_packs_in_images(
         fw_series:FWSeries,
-        vial_radius = PP_CONST["VIAL_RADIUS_MM"],
-        radius_tolerance = PP_CONST["RADIUS_TOLERANCE_MM"],
-        vert_align_tol = PP_CONST["VERT_ALIGN_TOLERANCE_MM"],
-        vial_separation = PP_CONST["VIAL_SEP_MM"],
-        vial_sep_tolerance = PP_CONST["VIAL_SEP_TOLERANCE_MM"],
+        vial_radius        = PP_CONST.vial_radius_mm,
+        radius_tolerance   = PP_CONST.radius_tolerance,
+        vial_separation    = PP_CONST.vial_separation_mm,
+        vial_sep_tolerance = PP_CONST.separation_tolerance,
+        vert_align_tol     = PP_CONST.alignment_tolerance,
         ):
     '''
         Finds circles in pdff/water image pairs ammends the fw_series.image_pairs to include those circles
@@ -207,11 +207,9 @@ def find_packs_in_images(
         px_size = ip.pixel_spacing
         min_radius, max_radius, min_vail_sep = vial_sizes_in_px(vial_radius, radius_tolerance, px_size)
         water_circles = circles_img_bottom(ip.water_img, min_radius, max_radius, min_vail_sep)
+        ip.dbg_found_circles = water_circles
         # display_image_with_circles(ip.water_img, water_circles, name=str(ip.location_full), waitkey=0)
         num_circles_in_pack = 5
-        # print(f"LOCATION: {ip.location}")
-        if ip.location == 6:
-            pause = True
         pack_circles = find_circle_groups(
             water_circles,
             radius = vial_radius/px_size,
@@ -222,22 +220,17 @@ def find_packs_in_images(
             spacing_tol = vial_sep_tolerance/vial_separation)
         if pack_circles == []:
             continue
-        # drop trivial first dimension/ hack: keep only first group
-        ip.circles = pack_circles[0]
-        if ip.circles:
-            pause = True
+        ip.circles = pack_circles[0] # drop trivial first dimension/ hack: keep only first group
 
     count_circles = [pair for pair in fw_series.image_pairs if pair.has_circles()]
     logger.info(f"  {len(count_circles)} slices contain phantom pack")
-    # if len(count_circles) == 0:
-    #     with open("no_packs_found.txt", "w") as f:
-    #         f.write(f"Series {water_ds.SeriesNumber}, {water_ds.SeriesDescription}")
     return
 
 
 def circles_img_bottom(img, min_radius, max_radius, min_vail_sep):
     cropped_img = make_clipped_image(img)
-    circles = circle_finder_water(cropped_img, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius)
+    blur = max((max_radius - min_radius)//4, 3)
+    circles = circle_finder_water(cropped_img, minDist=min_vail_sep, minRadius=min_radius, maxRadius=max_radius, blur_size=blur)
     return circles
 
 

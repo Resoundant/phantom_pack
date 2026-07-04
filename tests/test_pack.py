@@ -3,39 +3,55 @@ import numpy as np
 from phantom_pack import plot_utils
 from phantom_pack.pack_simulators import simulate_phantom_pack
 from phantom_pack.phantom_pack import find_packs_in_images
+from phantom_pack.fw import gen_pack_array_image
+import phantom_pack.plot_utils as pu
 
 
-def create_test_image() -> np.ndarray:
-    height = 256
-    width = 256
-    channels = 1 # color channels (1 = grayscale)
-    radius = 9 #px
-    spacing = 4*radius #px
-    x_offset = radius*2 #px
-    y_offset = radius*2 #px
-    img = np.zeros((height, width , channels), dtype=np.uint8)
-    for i in range(7):
-        for j in range(7):
-            x = int(x_offset + j*spacing)
-            y = int(y_offset + i*spacing)
-            intensity = int(255/49 * (i*7 + j))
-            cv2.circle(img, (x,y), radius, (intensity), -1) # solid circle (thickness = -1) filled with  1
-    return img
+def main():
+    results = []
+    missing = 0
+    for i in range(10):
+        results.append(sim_main())
+        if results[-1][2] != 50:
+            print("missing a slice")
+            missing += 1
+    print(f"{missing} total runs missing at least one slice")
 
-if __name__ == "__main__":
-    fw_series = simulate_phantom_pack()
+    # avg_first, avg_last, avg_num_slices = np.mean(results, axis=0)
+    # print(
+    #     f"Average first slice: {avg_first:.2f}, "
+    #     f"last slice: {avg_last:.2f}, "
+    #     f"num slices: {avg_num_slices:.2f}"
+    # )
 
-    # display a few images to be sure
-    display_slice = len(fw_series.image_pairs) // 2
-    # plot_utils.display_image(fw_series.image_pairs[display_slice].pdff_img, "PDFF, midpoint")
-    # plot_utils.display_image(fw_series.image_pairs[display_slice].water_img, "Water, midpoint")
+
+def sim_main():
+    fw_series = simulate_phantom_pack(
+        pdff_variance= 2,
+        pdff_noise = 2,
+        water_noise = 7  
+    )
+
+    # pack_image = gen_pack_array_image(fw_series.image_pairs, max_rows=10)
+    # pu.display_cimg(pack_image, "Pack image")
 
     find_packs_in_images(fw_series)
     fw_series.create_rois(5)
+
     fw_series.pack_midpoint = fw_series.find_pack_midpoint()
     span_mm = 15
     fw_series.stats_min_loc = fw_series.pack_midpoint - span_mm/2
     fw_series.stats_max_loc   = fw_series.pack_midpoint + span_mm/2
-    dict_results = fw_series.composite_statistics(fw_series.pack_midpoint, span_mm)
+    fw_series.find_pack_locations()
+    # dict_results = fw_series.composite_statistics(fw_series.pack_midpoint, span_mm)
 
-    x=1
+    # pack_image_circles = gen_pack_array_image(fw_series.image_pairs, max_rows=8)
+    # pu.display_cimg(pack_image_circles, "Pack image w circles")
+
+
+    print(  f"First slice: {fw_series.pack_first_slice}/{getattr(fw_series, "KNOWN_first_slice")}, last slice: {fw_series.pack_last_slice}, count: {fw_series.num_slices_with_circles}/{getattr(fw_series,"KNOWN_num_slices")}")
+    return fw_series.pack_first_slice, fw_series.pack_last_slice, fw_series.num_slices_with_circles
+
+
+if __name__ == "__main__":
+    main()

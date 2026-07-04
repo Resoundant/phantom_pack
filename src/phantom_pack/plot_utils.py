@@ -5,7 +5,44 @@ from copy import deepcopy
 import matplotlib.pyplot as plt
 from .fw import FWSeries
 
+_SCREEN_SIZE = None
+
+def _get_screen_size():
+    global _SCREEN_SIZE
+    if _SCREEN_SIZE is not None:
+        return _SCREEN_SIZE
+
+    screen_size = None
+    if os.name == 'nt':
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            try:
+                user32.SetProcessDPIAware()
+            except Exception:
+                pass
+            screen_size = (user32.GetSystemMetrics(0), user32.GetSystemMetrics(1))
+        except Exception:
+            pass
+
+    if screen_size is None:
+        root = None
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+            root.withdraw()
+            screen_size = (root.winfo_screenwidth(), root.winfo_screenheight())
+        except Exception:
+            screen_size = (1920, 1080)
+        finally:
+            if root is not None:
+                root.destroy()
+
+    _SCREEN_SIZE = screen_size
+    return _SCREEN_SIZE
+
 def display_image(img, name='image', waitkey=0):
+    """Normalize a grayscale image and display it in an OpenCV window."""
     im2=deepcopy(img)
     cimg = np.uint8(cv2.normalize(im2, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
@@ -14,11 +51,19 @@ def display_image(img, name='image', waitkey=0):
     cv2.destroyAllWindows()
 
 def display_cimg(cimg, name='image', waitkey=0):
+    """Display an already prepared color image in an OpenCV window."""
+    img_height, img_width = cimg.shape[:2]
+    screen_width, screen_height = _get_screen_size()
+    scale = min(1.0, (screen_width * 0.9) / img_width, (screen_height * 0.9) / img_height)
+    if scale < 1.0:
+        cv2.namedWindow(name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(name, int(img_width * scale), int(img_height * scale))
     cv2.imshow(name, cimg)
     cv2.waitKey(waitkey)
     cv2.destroyAllWindows()
 
 def display_image_with_circles(img, circles, name='image', waitkey=0):
+    """Display a normalized image with circle overlays drawn in green."""
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     np_circles = np.uint16(np.around(circles))
@@ -31,6 +76,7 @@ def display_image_with_circles(img, circles, name='image', waitkey=0):
 
 
 def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
+    """Save per-slice mean/stddev and median PDFF plots for a series."""
     # each entry in this will will be the 5 vials  in a slice
     pdff_means = []
     pdff_medians = []
@@ -60,8 +106,8 @@ def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
     plt.legend()
     plt.grid(True)
     # plt.show()
-    filename = f"{fw_series.image_pairs[0].pdff.PatientName}_{fw_series.series_number_pdff}_mean_stddev.png"
-    plt.savefig(os.path.join(directory_path, filename))
+    # filename = f"{fw_series.image_pairs[0].pdff_img.PatientName}_{fw_series.series_number_pdff}_mean_stddev.png"
+    # plt.savefig(os.path.join(directory_path, filename))
     plt.close()
 
     for i in range(data_means.shape[0]):
@@ -82,6 +128,7 @@ def plot_slice_values(fw_series:FWSeries, vert_lines=[], directory_path=''):
 
 
 def plot_image(img, name='image', waitkey=1):
+    """Normalize and display a single image in an OpenCV window."""
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     cv2.imshow(name, cimg)
@@ -90,6 +137,7 @@ def plot_image(img, name='image', waitkey=1):
 
 
 def plot_circles_list(img, circles, name='image', waitkey=1):
+    """Display an image with circle overlays from a list-like circle array."""
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     np_circles = np.uint16(np.around(circles))
@@ -101,6 +149,7 @@ def plot_circles_list(img, circles, name='image', waitkey=1):
 
 
 def plot_circles_ndarray(img, circles, name='image', waitkey=1):
+    """Display an image with circle overlays from a HoughCircles-style array."""
     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
     np_circles = np.uint16(np.around(circles))
@@ -112,7 +161,7 @@ def plot_circles_ndarray(img, circles, name='image', waitkey=1):
 
 
 def plot_selected_image(img_data:dict, dest_filepath:str=None, display_image=False):
-    ''' save pdff and water with ROIs on them'''
+    """Save or display paired PDFF and water images with circle and ROI overlays."""
     # put rois onto pdff and water images
     cimg_water = np.uint8(cv2.normalize(img_data["water"].pixel_array, None, 0, 255, cv2.NORM_MINMAX))
     cimg_water = cv2.cvtColor(cimg_water, cv2.COLOR_GRAY2BGR)
@@ -142,7 +191,7 @@ def plot_selected_image(img_data:dict, dest_filepath:str=None, display_image=Fal
 
 
 def plot_array(img_pack_data:list[dict], dest_filepath:str=None,display_image=False):
-    """Plot an array of images using OpenCV."""
+    """Save or display a tiled array of water images with circle overlays."""
     cols = 5
     rows = np.uint8(np.ceil(len(img_pack_data) / cols))
     # Create a blank canvas to hold the images
