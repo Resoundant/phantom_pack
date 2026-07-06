@@ -143,7 +143,8 @@ def label_datasets(datasets:list[pydicom.Dataset]):
 
 def label_dataset(ds:pydicom.Dataset):
     for id in identifying_labels:
-        if id["search_for"] in ds.get(id["search_in"]):
+        tag_value = ds.get(id["search_in"])
+        if tag_value is not None and id["search_for"] in tag_value:
             ds.image_label = id["image_label"]
             ds.label_match = id["label_match"]
             return
@@ -175,7 +176,7 @@ def rois_are_aligned(fw_series:FWSeries) -> bool:
             prev_rois = current_rois
             continue
         if len(prev_rois) != len(current_rois):
-            logger.warning("WARNING: ROIs not aligned across slices (different ROI counts)")
+            logger.warning("WARNING: Slices have different ROI counts!")
             return False
         for roi_idx, roi in enumerate(current_rois):
             x_sep = abs(float(prev_rois[roi_idx][CX]) - float(roi[CX]))

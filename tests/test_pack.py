@@ -39,17 +39,22 @@ def sim_main():
     fw_series.create_rois(5)
 
     fw_series.pack_midpoint = fw_series.find_pack_midpoint()
+    if fw_series.pack_midpoint == None:
+        print("Could not find pack midpoint in test_pack.sim_main()")
+        return
     span_mm = 15
     fw_series.stats_min_loc = fw_series.pack_midpoint - span_mm/2
-    fw_series.stats_max_loc   = fw_series.pack_midpoint + span_mm/2
+    fw_series.stats_max_loc = fw_series.pack_midpoint + span_mm/2
     fw_series.find_pack_locations()
-    # dict_results = fw_series.composite_statistics(fw_series.pack_midpoint, span_mm)
+    fwstats = fw_series.composite_statistics(fw_series.pack_midpoint, span_mm)
+
+    print(f"{fwstats.means}")
 
     # pack_image_circles = gen_pack_array_image(fw_series.image_pairs, max_rows=8)
     # pu.display_cimg(pack_image_circles, "Pack image w circles")
 
 
-    print(  f"First slice: {fw_series.pack_first_slice}/{getattr(fw_series, "KNOWN_first_slice")}, last slice: {fw_series.pack_last_slice}, count: {fw_series.num_slices_with_circles}/{getattr(fw_series,"KNOWN_num_slices")}")
+    # print(  f"First slice: {fw_series.pack_first_slice}/{getattr(fw_series, 'KNOWN_first_slice')}, last slice: {fw_series.pack_last_slice}, count: {fw_series.num_slices_with_circles}/{getattr(fw_series,'KNOWN_num_slices')}")
     return fw_series.pack_first_slice, fw_series.pack_last_slice, fw_series.num_slices_with_circles
 
 

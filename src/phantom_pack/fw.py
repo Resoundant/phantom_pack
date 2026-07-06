@@ -30,19 +30,15 @@ class FWSeries:
         self.series_description_pdff = ""
         self.series_description_water = ""
         self.image_pairs:list[FWImagePair] = []
-        self.pack_midpoint:float = -999.9
-        self.stats_min_loc = -999.9
-        self.stats_max_loc = -999.9
+        self.pack_midpoint:float|None = None
+        self.stats_min_loc:float|None = None
+        self.stats_max_loc:float|None = None
         self.pdff_metadata:pydicom.Dataset|None = None
         self.water_metadata:pydicom.Dataset|None = None
 
     
-    def find_pack_midpoint(self) -> float:
-        midpoint = find_midpoint([x.location_full for x in self.image_pairs if x.has_circles()])
-        if midpoint is None:
-            self.pack_midpoint = -999.9
-        else:
-            self.pack_midpoint = midpoint
+    def find_pack_midpoint(self) -> float|None:
+        self.pack_midpoint = find_midpoint([x.location_full for x in self.image_pairs if x.has_circles()])
         return self.pack_midpoint
 
 
@@ -135,7 +131,7 @@ class FWSeries:
     def plot_roi_values_linear(self, composite_results, output_dir):
         if composite_results is None:
             return
-        values = composite_results.values if isinstance(composite_results, FWStats) else composite_results.get("values", [])
+        values = composite_results.means if isinstance(composite_results, FWStats) else composite_results.get("means", [])
         values = np.asarray(values, dtype=float)
         if values.size == 0:
             return
@@ -179,6 +175,7 @@ class FWSeries:
     def save_results_json(self, output_dir, results):
         if results:
             results_dict = results.to_dict() if isinstance(results, FWStats) else results
+            results_dict.update(self.get_image_info())
             patient_name = results_dict.get("PatientName", "unknown")
             series_number = results_dict.get("SeriesNumber_pdff", "unknown")
             file_path = os.path.join(output_dir, f"{patient_name}_{series_number}.json")
@@ -197,7 +194,8 @@ class FWSeries:
         # partial data
         stats_min_loc = self.pack_midpoint - span_mm / 2
         stats_max_loc = self.pack_midpoint + span_mm / 2 
-        image_info = {}
+        image_info = self.get_image_info()
+        composite_results = {}
 
         # slice stats
         try:
@@ -226,7 +224,7 @@ class FWSeries:
             logger.warning(f"Error computing per-slice for series {self.series_number_pdff} {self.series_description_pdff}")
             return {}
 
-    def composite_statistics(self, center_mm, range_mm, max_slices:int = 0):
+    def composite_statistics(self, center_mm, range_mm, max_slices:int = 0) -> FWStats:
         '''
         Calculate the composite stats for slices in range (min_loc, max_loc)
         
@@ -236,23 +234,47 @@ class FWSeries:
             fw.sort_circles_by_x_coord()
 
         # quickly check that same number of ROIs in all images
+        # get number of ROIs in each image pair
         num_rois_in_images = []
         for img_pair in self.image_pairs:
             if img_pair.has_rois():
                 num_rois_in_images.append(len(img_pair.rois))
         if len(set(num_rois_in_images)) > 1:
             logger.warning("WARNING: not all images have same number of ROIs! This may cause issues")
+        if not num_rois_in_images:
+            return FWStats.from_values([])
 
         # check that all of the rois are aligned across slices by radius overlap
-        for i in range(len(self.image_pairs) - 1):
-            if self.image_pairs[i].has_rois() and self.image_pairs[i+1].has_rois():
-                for j in range(len(self.image_pairs[i].rois)):
-                    x_sep = abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX]))
-                    y_sep = abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY]))
-                    if x_sep > self.image_pairs[i].rois[j][CR]:
-                        logger.warning("WARNING: ROIs not aligned across slices (horizontally)!")
-                    if y_sep > self.image_pairs[i].rois[j][CR]:
-                        logger.warning("WARNING: ROIs not aligned across slices (vertically)!")
+        # select only ROIs that match the mode
+        mode_num_rois = int(np.argmax(np.bincount(num_rois_in_images)))
+        roi_arrays = [
+            np.asarray(img_pair.rois, dtype=float)
+            for img_pair in self.image_pairs
+            if img_pair.has_rois() and len(img_pair.rois) == mode_num_rois
+        ]
+        # todo: set rois != mode_num_rois to None??
+        if roi_arrays:
+            roi_stack = np.stack(roi_arrays, axis=0)
+            roi_centers = roi_stack[:, :, CX:CY + 1]
+            roi_radius = roi_stack[0][0][CR] # note: uses first entry, assumes all ROIs are same radius
+            average_roi_center = roi_centers.mean(axis=0)
+            distance_from_average = roi_centers - average_roi_center
+            if np.any(distance_from_average > roi_radius):
+                logger.warning("WARNING: ROIs not aligned across slices by radius overlap")
+
+
+        # for ip in self.image_pairs:
+        #     if ip.has_rois():
+        #         print(" ".join(f"({roi[CX]}, {roi[CY]})" for roi in ip.rois))
+        # for i in range(len(self.image_pairs) - 1):
+        #     if self.image_pairs[i].has_rois() and self.image_pairs[i+1].has_rois():
+        #         for j in range(len(self.image_pairs[i].rois)):
+        #             x_sep = abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX]))
+        #             y_sep = abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY]))
+        #             if x_sep > float(self.image_pairs[i].rois[j][CR]):
+        #                 logger.warning("WARNING: ROIs not aligned across slices (horizontally)!")
+        #             if y_sep > float(self.image_pairs[i].rois[j][CR]):
+        #                 logger.warning("WARNING: ROIs not aligned across slices (vertically)!")
 
         # limit min and max location to include (at most) max_slices
         stats_min_loc = center_mm - range_mm // 2
@@ -271,20 +293,20 @@ class FWSeries:
             # stats_min_loc = slices_in_range[0]
             # stats_max_loc = slices_in_range[-1]
 
-        # to calc mean, create lists made up of all pixels value in rois across all slices in range
-        roi_counts = np.bincount(num_rois_in_images)
-        num_rois_mode = int(np.argmax(roi_counts))
+
         masked_values = [[] for _ in range(num_rois_mode)]
         for img_pair in slices_in_range:
             if not img_pair.has_rois():
                 continue
             img_pair.slice_stats() # this is already done but re-do should be ok
-            if img_pair.pdff_stats == None:
-                    continue
-            for indx, samples in enumerate(img_pair.pdff_stats.samples):
-                masked_values[indx].extend(samples.tolist())
-        # todo: do something with these masked_values
-        return 
+            if img_pair.pdff_stats is None:
+                continue
+            for indx, samples in enumerate(img_pair.pdff_stats.samples[:num_rois_mode]):
+                samples = np.asarray(samples)
+                if samples.size:
+                    masked_values[indx].append(samples)
+
+        return FWStats.from_values(masked_values)
 
 
 class FWStats:
@@ -318,16 +340,41 @@ class FWStats:
     @classmethod
     def from_values(cls, values_by_roi:list[list[float]]) -> FWStats:
         obj = cls.__new__(cls)
+        n = len(values_by_roi)
+        obj.num_samples = np.zeros(n, dtype=int)
+        obj.samples = np.empty(n, dtype=object)
+        obj.roi_stats = [None] * n
+        obj.means   = np.full(n, np.nan, dtype=float)
+        obj.stddevs = np.full(n, np.nan, dtype=float)
+        obj.medians = np.full(n, np.nan, dtype=float)
+        obj.iqrs    = np.empty(n, dtype=object)
+        obj.mins    = np.full(n, np.nan, dtype=float)
+        obj.maxs    = np.full(n, np.nan, dtype=float)
+        obj.renormalized = False
+        obj.renormalized_divisor = 1
+
         for i, roi_vals in enumerate(values_by_roi):
-            if not roi_vals:
+            if isinstance(roi_vals, np.ndarray):
+                np_vals = roi_vals
+            elif not roi_vals:
+                obj.samples[i] = []
+                obj.iqrs[i] = np.array([np.nan, np.nan])
                 continue
-            np_vals = np.asarray(roi_vals)
-            obj.means[i]        = float(np.mean(np_vals))
-            obj.stddevs[i]      = float(np.std(np_vals))
+            elif isinstance(roi_vals[0], np.ndarray):
+                np_vals = np.concatenate(roi_vals)
+            else:
+                np_vals = np.asarray(roi_vals)
+            if np_vals.size == 0:
+                obj.samples[i] = []
+                obj.iqrs[i] = np.array([np.nan, np.nan])
+                continue
+            obj.means[i]        = float(np_vals.mean())
+            obj.stddevs[i]      = float(np_vals.std())
             obj.medians[i]      = float(np.median(np_vals))
-            obj.mins[i]         = float(np.min(np_vals))
-            obj.maxs[i]         = float(np.max(np_vals))
-            obj.samples[i]      = np_vals
+            obj.iqrs[i]         = np.percentile(np_vals, (25, 75))
+            obj.mins[i]         = float(np_vals.min())
+            obj.maxs[i]         = float(np_vals.max())
+            obj.samples[i]      = np_vals.tolist()
             obj.num_samples[i]  = int(np_vals.size)
         return obj
 
@@ -339,6 +386,7 @@ class FWStats:
             "mins": self.mins.tolist(),
             "maxs": self.maxs.tolist(),
             "num_samples": [int(x) for x in self.num_samples],
+            "samples": self.samples.tolist(),
             "values": self.samples.tolist(),
             "renormalized": self.renormalized,
         }
@@ -356,11 +404,11 @@ class FWStats:
                     self.renormalized_divisor = d
                     break
             self.means   = self.means / self.renormalized_divisor
-            self.stddev = self.medians / self.renormalized_divisor
+            self.stddevs = self.stddevs / self.renormalized_divisor
             self.medians = self.medians / self.renormalized_divisor
             self.iqrs = self.iqrs / self.renormalized_divisor
-            self.mins = self.medians / self.renormalized_divisor
-            self.maxs = self.medians / self.renormalized_divisor
+            self.mins = self.mins / self.renormalized_divisor
+            self.maxs = self.maxs / self.renormalized_divisor
             
 
 
@@ -368,7 +416,7 @@ class RoiStats:
     def __init__(self, image:np.ndarray, roi:np.ndarray):
         self.roi = roi
         self.num_samples    = 0
-        self.samples        = np.zeros
+        self.samples        = np.array([])
         self.mean           = np.nan
         self.stddev         = np.nan
         self.median         = np.nan    
