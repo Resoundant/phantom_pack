@@ -1,16 +1,20 @@
 import os
 import argparse
+import sys
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 import pydicom
 import numpy as np
 import cv2
 import datetime
-from .image_labels import identifying_labels
-from .load_dicoms import load_dicoms
-from .circle_grouping import find_circle_groups
-from .circle_finder import circle_finder_water
-from .fw import FWSeries, FWImagePair
-
-from .pp_config import PP_CONST
+from phantom_pack.image_labels import identifying_labels
+from phantom_pack.circle_grouping import find_circle_groups
+from phantom_pack.circle_finder import circle_finder_water
+from phantom_pack.fw import FWSeries, FWImagePair
+from phantom_pack.pp_config import PP_CONST
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,7 +51,7 @@ def phantom_pack(
     return a list of dictionaries containing results for each pdff/water pair
     '''
     if isinstance(labeled_dicoms, (str, os.PathLike)):
-        return process_directory(
+        return process_input(
             labeled_dicoms,
             vial_radius = vial_radius,
             radius_tolerance = radius_tolerance,
@@ -406,14 +410,19 @@ def load_and_label(directory_path) -> list[pydicom.Dataset]:
     '''
     load all files in directory and apply labels
     '''
+    from phantom_pack.load_dicoms import load_dicoms
     # load dicoms in directory
     logger.info("Loading files...")
     all_dicoms = load_dicoms(directory_path, turbo_mode=True)
 
     # label each dicom dataset according to identifying_labels
     label_datasets(all_dicoms)
-
     return all_dicoms
+
+
+def _init_logging(log_dir: str | os.PathLike) -> None:
+    logfile = os.path.join(os.fspath(log_dir), "phantom_pack.log")
+    logging.basicConfig(filename=logfile, level=logging.INFO)
 
 
 def process_directory(directory_path: str | os.PathLike, **kwargs) -> dict:
@@ -421,20 +430,33 @@ def process_directory(directory_path: str | os.PathLike, **kwargs) -> dict:
     if not os.path.isdir(directory_path):
         print(f"Could not find directory {directory_path}")
         return {}
-    logfile = os.path.join(directory_path, "phantom_pack.log")
-    logging.basicConfig(filename=logfile, level=logging.INFO)
-    logger.info(f"Processing {directory_path}")
+    _init_logging(directory_path)
+    logger.info(f"Processing directory {directory_path}")
     labeled_dicoms = load_and_label(directory_path)
-    results = phantom_pack(labeled_dicoms, directory_path=directory_path, **kwargs)
-    return results
+    return phantom_pack(labeled_dicoms, directory_path=directory_path, **kwargs)
+
+
+def process_input(input_path: str | os.PathLike, **kwargs) -> dict:
+    input_path = os.fspath(input_path)
+    if os.path.isdir(input_path):
+        return process_directory(input_path, **kwargs)
+    if os.path.isfile(input_path):
+        from phantom_pack.load_from_digest import load_from_digest_and_label
+        input_dir = os.path.dirname(os.path.abspath(input_path))
+        _init_logging(input_dir)
+        logger.info(f"Processing digest {input_path}")
+        labeled_dicoms = load_from_digest_and_label(input_path)
+        return phantom_pack(labeled_dicoms, directory_path=input_dir, **kwargs)
+    print(f"Could not find input {input_path}")
+    return {}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Find and analyze Calimetrix phantom pack vials in DICOM images.")
-    parser.add_argument("input_directory", help="Directory containing one patient-exam of DICOM files.")
+    parser.add_argument("input_path", help="Directory containing one patient-exam of DICOM files or a digest file.")
     args = parser.parse_args(argv)
 
-    results = process_directory(args.input_directory)
+    results = process_input(args.input_path)
     return 0 if results else 1
 
 
@@ -445,5 +467,3 @@ if __name__ == "__main__":
     # directory_path = os.path.dirname(testimg_path)4
     # ds = pydicom.dcmread(testimg_path)
     # circles_in_pdff(ds, min_radius=1, max_radius=60, min_sep=1)
-
-

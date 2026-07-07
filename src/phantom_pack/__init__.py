@@ -2,7 +2,7 @@
 
 from importlib.metadata import PackageNotFoundError, version
 
-from .phantom_pack import find_packs_in_images, load_and_label, phantom_pack, process_directory
+from .phantom_pack import phantom_pack, find_packs_in_images, load_and_label, process_input
 
 try:
     __version__ = version("phantom-pack")
@@ -14,5 +14,5 @@ __all__ = [
     "find_packs_in_images",
     "load_and_label",
     "phantom_pack",
-    "process_directory",
+    "process_input",
 ]

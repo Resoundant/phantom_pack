@@ -3,26 +3,11 @@ from pathlib import Path
 import pydicom
 from typing import Union
 
-PathLike = Union[str, Path]
 
-
-    # {
-    #     "image_label": "pdff",
-    #     "search_in": "ImageType",
-    #     "search_for": "FAT_FRACTION",
-    #     "label_match": "water"
-    # },
-    # {
-    #     "image_label": "water",
-    #     "search_in": "ImageType",
-    #     "search_for": "WATER",
-    #     "label_match": "pdff"
-    # },
-
-def load_from_digest_and_label(digest_file:PathLike) -> list[pydicom.Dataset]:
+def load_from_digest_and_label(digest_file:str|Path) -> list[pydicom.Dataset]:
     digest_lines = read_digest(digest_file)
-    pdff = load_contrast_from_key('fw.pdff.', digest_lines)
-    water = load_contrast_from_key('fw.water.', digest_lines)
+    pdff = load_contrast_from_key('fw.ffrac.slice.', digest_lines) # very frigile, needs the trailing period
+    water = load_contrast_from_key('fw.water.slice.', digest_lines)
     for ds in pdff:
         ds.image_label = "pdff"
         ds.label_match = "water"
@@ -32,7 +17,7 @@ def load_from_digest_and_label(digest_file:PathLike) -> list[pydicom.Dataset]:
     return pdff + water
 
 
-def read_digest(digest_file:PathLike) -> list[str]:
+def read_digest(digest_file:str|Path) -> list[str]:
     """Read a text file and return its lines without trailing newlines."""
     path = Path(digest_file)
     with path.open("r", encoding="utf-8") as fh:
@@ -42,7 +27,8 @@ def read_digest(digest_file:PathLike) -> list[str]:
 
 
 def load_contrast_from_key(key_root:str, digest_lines:list) -> list[pydicom.Dataset]:
-    files_to_load = [f for f in digest_lines if f.startswith(key_root)]
+    digest_fp = [f for f in digest_lines if f.startswith(key_root)]
+    files_to_load = [line.split("=", 1)[1].strip() for line in digest_fp]
     dicoms  = []
     for f in files_to_load:
         try:

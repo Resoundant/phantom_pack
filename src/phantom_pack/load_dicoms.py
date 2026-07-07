@@ -1,7 +1,7 @@
 import os
 import time
 import pydicom
-from .image_labels import load_labels
+from phantom_pack.image_labels import load_labels
 import logging
 logger = logging.getLogger(__name__)
 

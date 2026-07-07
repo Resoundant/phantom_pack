@@ -1,7 +1,7 @@
 import os
 import argparse
 import shutil
-from .phantom_pack import process_directory
+from .phantom_pack import process_input
 from .collate_outputs import collate_outputs
 
 import logging
@@ -16,7 +16,7 @@ def batch_process(top_directory: str | os.PathLike):
     for my_dir in my_dirs:
         if os.path.isdir(my_dir):
             print(f"phantom_pack {my_dir}")
-            results = process_directory(my_dir)
+            results = process_input(my_dir)
             shutil.copytree(os.path.join(my_dir, 'phantompack_results'), os.path.join(all_results_dir, os.path.basename(my_dir)), dirs_exist_ok=True)
 
     collate_outputs(all_results_dir)
