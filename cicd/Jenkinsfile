@@ -1,0 +1,36 @@
+pipeline {
+    agent { label 'build-lin3 || build-lin4' }
+
+    stages {
+        stage('BUILD') {
+            steps {
+                sh 'bash cicd/build.sh'
+                archiveArtifacts artifacts: 'dist/*.whl,dist/*.tar.gz', fingerprint: true
+            }
+        }
+
+        stage('PUBLISH TO RPY') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'jenkins-pypiserver',
+                        usernameVariable: 'UV_PUBLISH_USERNAME',
+                        passwordVariable: 'UV_PUBLISH_PASSWORD'
+                    )]) {
+                        sh 'uv publish --publish-url http://rpy.resoundant-hq.com:8081 dist/*.whl dist/*.tar.gz'
+                    }
+                }
+            }
+        }
+
+        stage('PUBLISH TO CICD2') {
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                    withEnv(['UV_PUBLISH_USERNAME=anon', 'UV_PUBLISH_PASSWORD=anon']) {
+                        sh 'uv publish --publish-url http://cicd2.resoundant-hq.com:8081 dist/*.whl dist/*.tar.gz'
+                    }
+                }
+            }
+        }
+    }
+}
