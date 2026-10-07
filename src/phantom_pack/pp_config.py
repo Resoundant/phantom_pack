@@ -11,7 +11,7 @@ class PPConfig:
     separation_tolerance: int = 9         # tolerance in vial sep
     radius_tolerance: int = 5             # only find circles VIAL_RADIUS +/- RADIUS_TOLERANCE
     alignment_tolerance: int = 7          # allows for skew in vial alignment through-slice
-    analysis_span_mm: int = 20            # analyze a range of images centered at the midpoint
+    analysis_span_mm: int = 15            # analyze centered within this span of the pack's midpoint
     analysis_center: float | None = None  # center span at a specific location, None to use midpoint
     pack_length_mm: float = 150
 
