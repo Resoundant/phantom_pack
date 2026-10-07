@@ -151,25 +151,21 @@ class FWSeries:
         plt.close()
     
 
-    def save_plot_images(self, output_dir, image_info, stats_min_loc, stats_max_loc):
-        patient_name = image_info.get("PatientName", "unknown")
-        series_number = self.series_number
-        # TODO restore
-        # plot_results(fw_serie.image_pairs, dest_filepath=array_filepath, display_image=False)
-        array_filepath = os.path.join(output_dir, f"{patient_name}_{series_number}_selected.png")
+    def save_plot_images(self, stats_min_loc, stats_max_loc, output_dir:str|Path='' ) -> np.ndarray:
         image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
-        # plot_results(image_pairs_in_span, dest_filepath=array_filepath, display_image=False)
-        hp_img_fp = Path(output_dir) / f'{series_number}_hepplus_img.png'
-        hepplus_img = self.create_save_hepplus_img_array(filepath=hp_img_fp)
-
-
-    def create_save_hepplus_img_array(self, filepath=None) -> np.ndarray:
-        image_pairs_in_span = self.img_pairs_in_span(min_loc=self.stats_min_loc, max_loc=self.stats_max_loc)
         pack_arr_img = gen_pack_array_image(image_pairs_in_span)
-        # plot_utils.display_cimg(pack_arr_img)
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        cv2.imwrite(filepath, pack_arr_img)
+        if output_dir:
+            fp = Path(output_dir) / f'{self.series_number}_hepplus_img.png'
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            cv2.imwrite(fp, pack_arr_img)
         return pack_arr_img
+
+    def save_table(self, composite_results:dict, output_dir:str|Path=''):
+        pdff_table = gen_results_table(composite_results)
+        if output_dir:
+            fp = Path(output_dir) / f'{self.series_number}_hepplus_table.png'
+            os.makedirs(os.path.dirname(fp), exist_ok=True)
+            cv2.imwrite(fp, pdff_table)
 
 
     def save_results_json(self, output_dir, results):
@@ -212,7 +208,8 @@ class FWSeries:
 
         # images and plots
         try:
-            self.save_plot_images(output_dir, image_info, stats_min_loc, stats_max_loc)
+            pack_image = self.save_plot_images(stats_min_loc, stats_max_loc, output_dir=output_dir)
+            pack_table = self.save_table(composite_results, output_dir=output_dir)
         except:
             logger.warning(f"Error saving plots for series {self.series_number_pdff} {self.series_description_pdff}")
 
@@ -262,20 +259,6 @@ class FWSeries:
             if np.any(distance_from_average > roi_radius):
                 logger.warning("WARNING: ROIs not aligned across slices by radius overlap")
 
-
-        # for ip in self.image_pairs:
-        #     if ip.has_rois():
-        #         print(" ".join(f"({roi[CX]}, {roi[CY]})" for roi in ip.rois))
-        # for i in range(len(self.image_pairs) - 1):
-        #     if self.image_pairs[i].has_rois() and self.image_pairs[i+1].has_rois():
-        #         for j in range(len(self.image_pairs[i].rois)):
-        #             x_sep = abs(float(self.image_pairs[i].rois[j][CX]) - float(self.image_pairs[i+1].rois[j][CX]))
-        #             y_sep = abs(float(self.image_pairs[i].rois[j][CY]) - float(self.image_pairs[i+1].rois[j][CY]))
-        #             if x_sep > float(self.image_pairs[i].rois[j][CR]):
-        #                 logger.warning("WARNING: ROIs not aligned across slices (horizontally)!")
-        #             if y_sep > float(self.image_pairs[i].rois[j][CR]):
-        #                 logger.warning("WARNING: ROIs not aligned across slices (vertically)!")
-
         # limit min and max location to include (at most) max_slices
         stats_min_loc = center_mm - range_mm // 2
         stats_max_loc = center_mm + range_mm // 2
@@ -294,14 +277,14 @@ class FWSeries:
             # stats_max_loc = slices_in_range[-1]
 
 
-        masked_values = [[] for _ in range(num_rois_mode)]
+        masked_values = [[] for _ in range(mode_num_rois)]
         for img_pair in slices_in_range:
             if not img_pair.has_rois():
                 continue
             img_pair.slice_stats() # this is already done but re-do should be ok
             if img_pair.pdff_stats is None:
                 continue
-            for indx, samples in enumerate(img_pair.pdff_stats.samples[:num_rois_mode]):
+            for indx, samples in enumerate(img_pair.pdff_stats.samples[:mode_num_rois]):
                 samples = np.asarray(samples)
                 if samples.size:
                     masked_values[indx].append(samples)
@@ -631,27 +614,133 @@ def gen_pack_array_image(img_pairs:list[FWImagePair], max_rows=0) -> np.ndarray:
         return np.uint8(np.clip((img_f - vmin) * scale, 0, 255))
 
     for i, img_pair in enumerate(img_pairs):
+        # normalize
         cimg_watr = normalize_to_uint8(img_pair.water_img, watr_min, watr_max)
         cimg_watr = cv2.cvtColor(cimg_watr, cv2.COLOR_GRAY2BGR)
         cimg_pdff = normalize_to_uint8(img_pair.pdff_img, pdff_min, pdff_max)
         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
+
+        circle_color = (0,0,255)
+        roi_color = (255,255,0)
         # draw circles around water vials
         if img_pair.has_circles():
             np_circles = np.uint16(np.around(img_pair.circles))
             for c in np_circles:
-                cv2.circle(cimg_watr,(int(c[0]),int(c[1])),c[2],(0,0,255),1)
+                cv2.circle(cimg_watr,(int(c[0]),int(c[1])),c[2],circle_color,1)
         # draw ROIs in pdff vials
         if img_pair.has_rois():
             np_rois = np.uint16(np.around(img_pair.rois))
             for j, c in enumerate(np_rois):
-                cv2.circle(cimg_pdff, (int(c[0]),int(c[1])),c[2],(255,255,0),1)
+                cv2.circle(cimg_pdff, (int(c[0]),int(c[1])),c[2],roi_color,1)
 
+        # add per-vial PDFF values to cimg_pdff
+        if img_pair.has_rois():
+            text = "   ".join(f"{mn:.1f}" for mn in img_pair.pdff_stats.means)
+            if text:
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                thickness = 1
+                (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+                font_scale *= min(1.0, max(1, img_w - 4) / max(1, text_w),
+                            max(1, img_h - 4) / max(1, text_h + baseline))
+                (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+                y = img_h - baseline - 2
+                x = (img_w - text_w) // 2
+                cv2.rectangle(cimg_pdff, (max(0, x - 2), max(0, y - text_h - 2)),
+                    (min(img_w - 1, x + text_w + 2), img_h - 1),
+                    (0, 0, 0), cv2.FILLED)
+                cv2.putText(cimg_pdff, text, (x, y), font, font_scale,
+                            roi_color, thickness, cv2.LINE_AA)
+
+        # merge water and pdff into a row
         row = i % arr_rows
         col = i // arr_rows
         y0 = row * img_h
         x0 = col * pair_w
         canvas[y0:y0 + img_h,           x0:x0 + img_w]  = cimg_watr
         canvas[y0:y0 + img_h,   img_w + x0:x0 + pair_w] = cimg_pdff
+        # add location to this row
+        text = f"LOC: {img_pair.location}"
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.7
+        thickness = 2
+        top_space = 20
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        font_scale *= min(1.0, max(1, pair_w - 4) / max(1, text_w),
+                          max(1, img_h - 4) / max(1, text_h + baseline))
+        (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+        pair_canvas = canvas[y0:y0 + img_h, x0:x0 + pair_w]
+        text_x = (pair_w - text_w) // 2
+        cv2.rectangle(pair_canvas, (max(0, text_x - 2), top_space),
+                      (min(pair_w - 1, text_x + text_w + 2),
+                       top_space + text_h + baseline + 3), (0, 0, 0), cv2.FILLED)
+        cv2.putText(pair_canvas, text, (text_x, top_space + text_h + 2),
+                    font, font_scale, roi_color, thickness, cv2.LINE_AA)
+    return canvas
+
+def gen_results_table(composite_results:dict):
+    ''' 
+    creates a table of actual and expected values, 
+    formatting the background green if within expectation and
+    red if outside expectation.
+
+    Table footer shows X / 5 greens, and will be green if 5/5, yellow if 4/5, and red if 3/5 or less.
+    '''
+    if not composite_results:
+        return
+    # TODO: LAZY DEFINE HERE - abstract out these tolerances
+    # (nominal, tolerance), tolerance is +/-
+    pdff_tolerance = (
+        (0, 4),
+        (10, 4),
+        (20, 4),
+        (30, 4),
+        (40, 4),
+    )
+
+    cell_w, cell_h = 120, 40
+    width, height = 2 * cell_w, 7 * cell_h
+    canvas = np.full((height + 1, width + 1, 3), 255, dtype=np.uint8)
+    color = (0, 0, 0)
+    for col in range(3):
+        x = col * cell_w
+        line_height = 6 * cell_h if col == 1 else height
+        cv2.line(canvas, (x, 0), (x, line_height), color, 1)
+    for row in range(8):
+        y = row * cell_h
+        cv2.line(canvas, (0, y), (width, y), color, 1)
+
+    means = composite_results.means if isinstance(composite_results, FWStats) else composite_results.get("means", [])
+    if len(means) >= 5 and means[0] > means[4]:  # reverse order if vials are 40, 30, ... 0
+        means = means[::-1]
+    green_count = 0
+    value_labels = []
+    for row, (value, (nominal, tolerance)) in enumerate(zip(means, pdff_tolerance), start=1):
+        within_tolerance = nominal - tolerance <= value <= nominal + tolerance
+        green_count += int(within_tolerance)
+        background = (0, 255, 0) if within_tolerance else (0, 255, 255)
+        canvas[row * cell_h + 1:(row + 1) * cell_h, 1:cell_w] = background
+        value_labels.append((row, 0, f"{value:.1f}"))
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale, thickness = 0.6, 1
+    labels = [(0, col, label) for col, label in enumerate(("PDFF", "CONTROL"))]
+    labels.extend(value_labels)
+    labels.extend((row, 1, f"{nominal} +/- {tolerance}")
+            for row, (nominal, tolerance) in enumerate(pdff_tolerance, start=1))
+    for row, col, label in labels:
+        (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
+        x = col * cell_w + (cell_w - text_w) // 2
+        y = row * cell_h + (cell_h + text_h) // 2
+        cv2.putText(canvas, label, (x, y), font, font_scale,
+                    color, thickness, cv2.LINE_AA)
+    background = (0, 255, 0) if green_count == 5 else (0, 255, 255) if green_count == 4 else (0, 0, 255)
+    canvas[6 * cell_h + 1:height, 1:width] = background
+    label = f"{green_count}/5"
+    (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
+    x = (width - text_w) // 2
+    y = 6 * cell_h + (cell_h + text_h) // 2
+    cv2.putText(canvas, label, (x, y), font, font_scale,
+                color, thickness, cv2.LINE_AA)
     return canvas
 
 def normalization_values(img_pairs):

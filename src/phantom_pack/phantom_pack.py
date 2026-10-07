@@ -108,13 +108,6 @@ def phantom_pack(
         if fw.pack_midpoint is None:
             logger.warning(f"No pack midpoint found for series {fw.series_number_pdff} {fw.series_description_pdff}")
             continue
-
-        # try:
-        #     fw.stats_min_loc = fw.pack_midpoint-span_mm/2
-        #     fw.stats_max_loc = fw.pack_midpoint+span_mm/2
-        # except: 
-        #     logger.warning("ERROR computing min and max slice location")
-        #     return {}
         
         results = fw.compute_and_save_results(span_mm, output_dir)
     return results
@@ -122,8 +115,10 @@ def phantom_pack(
 
 def log_unknowns_to_file(output_dir, all_dicoms):
     unknowns = [x for x in all_dicoms if x.image_label == "unknown"]
+    if not unknowns:
+        return
     unknown_series_uids = list(set([x.SeriesInstanceUID for x in unknowns]))
-    with open(os.path.join(output_dir, f"summary_data_unknown.txt"), 'w') as f:
+    with open(os.path.join(output_dir, f"summary__data_labeled_unknown.txt"), 'w') as f:
         for series_uid in unknown_series_uids:
             unk_series = [x for x in unknowns if x.SeriesInstanceUID == series_uid]
             unk_series_nums = list(set([x.SeriesNumber for x in unk_series]))
@@ -438,8 +433,11 @@ def process_directory(directory_path: str | os.PathLike, **kwargs) -> dict:
 
 def process_input(input_path: str | os.PathLike, **kwargs) -> dict:
     input_path = os.fspath(input_path)
+    # if input arg is a directory, use process_directory() to find images
     if os.path.isdir(input_path):
         return process_directory(input_path, **kwargs)
+
+    #if input arg is a (digest) file, process that file
     if os.path.isfile(input_path):
         from phantom_pack.load_from_digest import load_from_digest_and_label
         input_dir = os.path.dirname(os.path.abspath(input_path))
