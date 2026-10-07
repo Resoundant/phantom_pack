@@ -1,6 +1,11 @@
 pipeline {
     agent { label 'build-lin3 || build-lin4' }
 
+    // add uv to path
+    environment {
+        PATH = "${env.HOME}/.local/bin:${env.PATH}"
+    }
+
     stages {
         stage('BUILD') {
             steps {
