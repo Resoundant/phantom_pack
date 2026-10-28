@@ -21,6 +21,16 @@ CY = 1
 CR = 2
 
 
+# PDFF acceptance criteria: (nominal, lower bound, upper bound), inclusive.
+PDFF_TOLERANCE = (
+    (0, -4, 4),
+    (10, 6, 14),
+    (20, 16, 24),
+    (30, 26, 34),
+    (40, 36, 44),
+)
+
+
 
 class FWSeries:
     def __init__(self, series_number:int):
@@ -151,16 +161,18 @@ class FWSeries:
         plt.close()
     
 
-    def save_plot_images(self, stats_min_loc, stats_max_loc, output_dir:str|Path='' ) -> np.ndarray:
+    def make_plot_images(self, stats_min_loc, stats_max_loc, output_dir:str|Path='' ) -> list[np.ndarray]:
         image_pairs_in_span = self.img_pairs_in_span(min_loc=stats_min_loc, max_loc=stats_max_loc)
         pack_arr_img = gen_pack_array_image(image_pairs_in_span)
         if output_dir:
-            fp = Path(output_dir) / f'{self.series_number}_hepplus_img.png'
-            os.makedirs(os.path.dirname(fp), exist_ok=True)
-            cv2.imwrite(fp, pack_arr_img)
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            for index, image in enumerate(pack_arr_img, start=1):
+                fp = output_path / f'{self.series_number}_hepplus_img_{index}.png'
+                cv2.imwrite(str(fp), image)
         return pack_arr_img
 
-    def save_table(self, composite_results:dict, output_dir:str|Path=''):
+    def save_table(self, composite_results:FWStats, output_dir:str|Path=''):
         pdff_table = gen_results_table(composite_results)
         if output_dir:
             fp = Path(output_dir) / f'{self.series_number}_hepplus_table.png'
@@ -184,14 +196,13 @@ class FWSeries:
             fw.slice_stats()
 
 
-    def compute_and_save_results(self, span_mm, output_dir) -> dict:
+    def compute_and_save_results(self, span_mm, output_dir, pdff_tol=PDFF_TOLERANCE) -> FWStats:
         # this code is a bit rigid in expecting regularly structed data (same number of packs, same pixels in each ROI, etc))
         # to avoid it crashing the whole works, if something doesn't finish, it will except and move on, saving no data or
         # partial data
         stats_min_loc = self.pack_midpoint - span_mm / 2
         stats_max_loc = self.pack_midpoint + span_mm / 2 
-        image_info = self.get_image_info()
-        composite_results = {}
+        composite_results = FWStats.from_values([])
 
         # slice stats
         try:
@@ -202,13 +213,14 @@ class FWSeries:
         # composite stats
         try:
             composite_results = self.composite_statistics(self.pack_midpoint, span_mm, max_slices=3)
+            composite_results.pdff_acceptance_ranges = pdff_tol
             self.plot_composite_means(composite_results, output_dir)
         except:
             logger.warning(f"Error computing comsposite statistics for series {self.series_number_pdff} {self.series_description_pdff}")
 
         # images and plots
         try:
-            pack_image = self.save_plot_images(stats_min_loc, stats_max_loc, output_dir=output_dir)
+            pack_images = self.make_plot_images(stats_min_loc, stats_max_loc, output_dir=output_dir)
             pack_table = self.save_table(composite_results, output_dir=output_dir)
         except:
             logger.warning(f"Error saving plots for series {self.series_number_pdff} {self.series_description_pdff}")
@@ -219,7 +231,7 @@ class FWSeries:
             return composite_results
         except:
             logger.warning(f"Error computing per-slice for series {self.series_number_pdff} {self.series_description_pdff}")
-            return {}
+            return composite_results
 
     def composite_statistics(self, center_mm, range_mm, max_slices:int = 0) -> FWStats:
         '''
@@ -273,9 +285,6 @@ class FWSeries:
             slices_in_range = list(slices_in_range)
             slices_in_range.sort(key=lambda img_pair: abs(img_pair.location_full - center_mm))
             slices_in_range = slices_in_range[:max_slices]
-            # stats_min_loc = slices_in_range[0]
-            # stats_max_loc = slices_in_range[-1]
-
 
         masked_values = [[] for _ in range(mode_num_rois)]
         for img_pair in slices_in_range:
@@ -289,7 +298,12 @@ class FWSeries:
                 if samples.size:
                     masked_values[indx].append(samples)
 
-        return FWStats.from_values(masked_values)
+        stats = FWStats.from_values(masked_values)
+        stats.pack_midpoint = self.pack_midpoint
+        stats.pack_ends = (self.pack_first_slice_loc, self.pack_last_slice_loc)
+        stats.measurement_origin = center_mm
+
+        return stats
 
 
 class FWStats:
@@ -307,6 +321,11 @@ class FWStats:
         self.maxs    = np.zeros(n, dtype=float)
         self.renormalized = False
         self.renormalized_divisor = 1
+        self.pack_midpoint:float|None = None
+        self.pack_ends:tuple = (None, None)
+        self.measurement_origin:float|None = None
+        self.pdff_acceptance_ranges:tuple = tuple()
+
 
         for i, roi in enumerate(rois):
             roi_stats               = RoiStats(image, roi)
@@ -574,34 +593,14 @@ def extract_dicom_tags(dataset:pydicom.Dataset|None) -> dict:
         info[tag] = str(dataset.get(tag))
     return info
 
-
-# def plot_circles_ndarray(img, circles, name='image', waitkey=1):
-#     cimg = np.uint8(cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX))
-#     cimg = cv2.cvtColor(cimg, cv2.COLOR_GRAY2BGR)
-#     np_circles = np.uint16(np.around(circles))
-#     for c in np_circles[0,:]: # don't remembwer what packing needed this slice
-#         cv2.circle(cimg,(c[CX],c[CY]),c[CR],(0,255,0),2)
-#     cv2.imshow(name, cimg)
-#     cv2.waitKey(waitkey)
-#     cv2.destroyAllWindows()
-
-
-def gen_pack_array_image(img_pairs:list[FWImagePair], max_rows=0) -> np.ndarray:
-    '''
-    Create an image that has water/pdff pairs (left/right)
-    and up to three rows (at which point it adds another column)
-    '''
-    if len(img_pairs) < 1:
-        return
-    channels = 3
-    num_pairs = len(img_pairs)
-    arr_rows = num_pairs if max_rows == 0 else min(num_pairs, max_rows)
-    arr_cols = (num_pairs + arr_rows - 1) // arr_rows
-    cimg_setup = cv2.cvtColor(np.uint8(img_pairs[0].water_img), cv2.COLOR_GRAY2BGR) 
-    img_h, img_w, channels = cimg_setup.shape
-
-    pair_w = img_w * 2
-    canvas = np.zeros((img_h * arr_rows, pair_w * arr_cols, channels), dtype=np.uint8)
+def gen_pack_array_image(img_pairs:list[FWImagePair]) -> list[np.ndarray]:
+    """
+    Return a list of one images, one per pair in span,
+    with water above PDFF and location at the top.
+    """
+    if not img_pairs:
+        return []
+    images = []
 
     # prepare normalzation
     watr_min, watr_max, pdff_min, pdff_max = normalization_values(img_pairs)
@@ -613,13 +612,14 @@ def gen_pack_array_image(img_pairs:list[FWImagePair], max_rows=0) -> np.ndarray:
         img_f = img.astype(np.float32, copy=False)
         return np.uint8(np.clip((img_f - vmin) * scale, 0, 255))
 
-    for i, img_pair in enumerate(img_pairs):
+    for img_pair in img_pairs:
         # normalize
         cimg_watr = normalize_to_uint8(img_pair.water_img, watr_min, watr_max)
         cimg_watr = cv2.cvtColor(cimg_watr, cv2.COLOR_GRAY2BGR)
         cimg_pdff = normalize_to_uint8(img_pair.pdff_img, pdff_min, pdff_max)
         cimg_pdff = cv2.cvtColor(cimg_pdff, cv2.COLOR_GRAY2BGR)
 
+        img_h, img_w = cimg_pdff.shape[:2]
         circle_color = (0,0,255)
         roi_color = (255,255,0)
         # draw circles around water vials
@@ -652,52 +652,39 @@ def gen_pack_array_image(img_pairs:list[FWImagePair], max_rows=0) -> np.ndarray:
                 cv2.putText(cimg_pdff, text, (x, y), font, font_scale,
                             roi_color, thickness, cv2.LINE_AA)
 
-        # merge water and pdff into a row
-        row = i % arr_rows
-        col = i // arr_rows
-        y0 = row * img_h
-        x0 = col * pair_w
-        canvas[y0:y0 + img_h,           x0:x0 + img_w]  = cimg_watr
-        canvas[y0:y0 + img_h,   img_w + x0:x0 + pair_w] = cimg_pdff
-        # add location to this row
-        text = f"LOC: {img_pair.location}"
+        # Overlay location along the top edge of the water image.
+        water_h, water_w = cimg_watr.shape[:2]
+        text = f"{img_pair.location_full:.1f}".rstrip("0").rstrip(".") + "mm"
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.7
         thickness = 2
-        top_space = 20
+        top_space = 0
         (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-        font_scale *= min(1.0, max(1, pair_w - 4) / max(1, text_w),
-                          max(1, img_h - 4) / max(1, text_h + baseline))
+        font_scale *=   min(1.0, max(1, water_w - 4) / max(1, text_w),
+                        max(1, water_h - 4) / max(1, text_h + baseline))
         (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
-        pair_canvas = canvas[y0:y0 + img_h, x0:x0 + pair_w]
-        text_x = (pair_w - text_w) // 2
-        cv2.rectangle(pair_canvas, (max(0, text_x - 2), top_space),
-                      (min(pair_w - 1, text_x + text_w + 2),
-                       top_space + text_h + baseline + 3), (0, 0, 0), cv2.FILLED)
-        cv2.putText(pair_canvas, text, (text_x, top_space + text_h + 2),
-                    font, font_scale, roi_color, thickness, cv2.LINE_AA)
-    return canvas
+        text_x = (water_w - text_w) // 2
+        cv2.rectangle(cimg_watr, (max(0, text_x - 2), top_space),
+            (min(water_w - 1, text_x + text_w + 2),
+            top_space + text_h + baseline + 3), (0, 0, 0), cv2.FILLED)
+        cv2.putText(cimg_watr, text, (text_x, top_space + text_h + 2),
+            font, font_scale, roi_color, thickness, cv2.LINE_AA)
+        images.append(np.concatenate((cimg_watr, cimg_pdff), axis=0))
+    return images
 
-def gen_results_table(composite_results:dict):
+def gen_results_table(composite_results:FWStats|dict, pdff_tolerance=PDFF_TOLERANCE):
     ''' 
     creates a table of actual and expected values, 
     formatting the background green if within expectation and
     red if outside expectation.
 
+    pdff_tolerance contains five (nominal, lower bound, upper bound) tuples.
+    Bounds are inclusive and default to PDFF_TOLERANCE.
+
     Table footer shows X / 5 greens, and will be green if 5/5, yellow if 4/5, and red if 3/5 or less.
     '''
     if not composite_results:
         return
-    # TODO: LAZY DEFINE HERE - abstract out these tolerances
-    # (nominal, tolerance), tolerance is +/-
-    pdff_tolerance = (
-        (0, 4),
-        (10, 4),
-        (20, 4),
-        (30, 4),
-        (40, 4),
-    )
-
     cell_w, cell_h = 120, 40
     width, height = 2 * cell_w, 7 * cell_h
     canvas = np.full((height + 1, width + 1, 3), 255, dtype=np.uint8)
@@ -715,8 +702,8 @@ def gen_results_table(composite_results:dict):
         means = means[::-1]
     green_count = 0
     value_labels = []
-    for row, (value, (nominal, tolerance)) in enumerate(zip(means, pdff_tolerance), start=1):
-        within_tolerance = nominal - tolerance <= value <= nominal + tolerance
+    for row, (value, (nominal, lower, upper)) in enumerate(zip(means, pdff_tolerance), start=1):
+        within_tolerance = lower <= value <= upper
         green_count += int(within_tolerance)
         background = (0, 255, 0) if within_tolerance else (0, 255, 255)
         canvas[row * cell_h + 1:(row + 1) * cell_h, 1:cell_w] = background
@@ -725,13 +712,15 @@ def gen_results_table(composite_results:dict):
     font_scale, thickness = 0.6, 1
     labels = [(0, col, label) for col, label in enumerate(("PDFF", "CONTROL"))]
     labels.extend(value_labels)
-    labels.extend((row, 1, f"{nominal} +/- {tolerance}")
-            for row, (nominal, tolerance) in enumerate(pdff_tolerance, start=1))
+    labels.extend((row, 1, f"{nominal} [{lower}, {upper}]")
+            for row, (nominal, lower, upper) in enumerate(pdff_tolerance, start=1))
     for row, col, label in labels:
         (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
+        label_scale = font_scale * min(1.0, (cell_w - 8) / max(1, text_w))
+        (text_w, text_h), _ = cv2.getTextSize(label, font, label_scale, thickness)
         x = col * cell_w + (cell_w - text_w) // 2
         y = row * cell_h + (cell_h + text_h) // 2
-        cv2.putText(canvas, label, (x, y), font, font_scale,
+        cv2.putText(canvas, label, (x, y), font, label_scale,
                     color, thickness, cv2.LINE_AA)
     background = (0, 255, 0) if green_count == 5 else (0, 255, 255) if green_count == 4 else (0, 0, 255)
     canvas[6 * cell_h + 1:height, 1:width] = background
