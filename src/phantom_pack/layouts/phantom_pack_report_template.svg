@@ -1,0 +1,103 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024"
+    height="1024" viewBox="0 0 1024 1024" fill="none">
+    <g id="phantom_pack_report_template">
+        <rect width="1024" height="1024" fill="#0B0303" />
+        <g id="images">
+            <g id="images_header_left">
+                <text id="images_header_left_text" x="54" y="430.434" text-anchor="start"
+                    fill="white" font-family="Arial" font-size="20" letter-spacing="0em"
+                    style="white-space: pre" xml:space="preserve"><tspan id="images_header_left_label" font-style="italic">{{images_header_left}}</tspan><tspan id="images_header_left_spacing"> </tspan><tspan id="images_header_left_value">{{ihl_val}}</tspan></text>
+            </g>
+            <g id="images_header_right">
+                <text id="images_header_right_text" x="974" y="430.434" text-anchor="end"
+                    fill="white" font-family="Arial" font-size="20" letter-spacing="0em"
+                    style="white-space: pre" xml:space="preserve"><tspan id="images_header_right_label" font-style="italic">{{images_header_right}}</tspan><tspan id="images_header_right_spacing"> </tspan><tspan id="images_header_right_value">{{ihr_val}}</tspan></text>
+            </g>
+            <image id="img_0" x="51" y="470" width="256" height="512" preserveAspectRatio="none" href="" />
+            <image id="img_1" x="385" y="470" width="256" height="512" preserveAspectRatio="none" href="" />
+            <image id="img_2" x="718" y="470" width="256" height="512" preserveAspectRatio="none" href="" />
+        </g>
+        <line id="Line 1" x1="53" y1="401.75" x2="973" y2="401.75" stroke-width="0.5"
+            stroke="#B5B5B5" />
+        <g id="vials">
+            <g id="vial_0">
+                <g id="Group 0">
+                    <circle id="vial_color_0" cx="152" cy="267" r="45" stroke-width="10"
+                        stroke="#159C78" />
+                    <text id="vial_val_0" fill="white" style="white-space: pre" xml:space="preserve"
+                        font-family="Arial" font-size="24" font-weight="bold" letter-spacing="0em"
+                        text-anchor="middle" x="152"><tspan x="152" y="275.32">{{v_0}}</tspan></text>
+                </g>
+                <text id="threshold_0" fill="white" style="white-space: pre" xml:space="preserve"
+                    font-family="Arial" font-size="14" letter-spacing="0em" text-anchor="middle"
+                    x="152"><tspan x="152" y="340.854">{{thresh_0}}</tspan></text>
+            </g>
+            <g id="vial_1">
+                <text id="threshold_1" fill="white" style="white-space: pre" xml:space="preserve"
+                    font-family="Arial" font-size="14" letter-spacing="0em" text-anchor="middle"
+                    x="332"><tspan x="332" y="337.854">{{thresh_1}}</tspan></text>
+                <g id="Group 5">
+                    <circle id="vial_color_1" cx="332" cy="264" r="45" stroke-width="10"
+                        stroke="#475569" />
+                    <text id="vial_val_1" fill="white" style="white-space: pre" xml:space="preserve"
+                        font-family="Arial" font-size="24" font-weight="bold" letter-spacing="0em"
+                        text-anchor="middle" x="332"><tspan x="332" y="272.32">{{v_1}}</tspan></text>
+                </g>
+            </g>
+            <g id="vial_2">
+                <text id="threshold_2" fill="white" style="white-space: pre" xml:space="preserve"
+                    font-family="Arial" font-size="14" letter-spacing="0em" text-anchor="middle"
+                    x="512"><tspan x="512" y="340.854">{{thresh_2}}</tspan></text>
+                <g id="Group 6">
+                    <circle id="vial_color_2" cx="512" cy="267" r="45" stroke-width="10"
+                        stroke="#159C78" />
+                    <text id="vial_val_2" fill="white" style="white-space: pre" xml:space="preserve"
+                        font-family="Arial" font-size="24" font-weight="bold" letter-spacing="0em"
+                        text-anchor="middle" x="512"><tspan x="512" y="275.32">{{v_2}}</tspan></text>
+                </g>
+            </g>
+            <g id="vial_3">
+                <text id="threshold_3" fill="white" style="white-space: pre" xml:space="preserve"
+                    font-family="Arial" font-size="14" letter-spacing="0em" text-anchor="middle"
+                    x="692"><tspan x="692" y="340.854">{{thresh_3}}</tspan></text>
+                <g id="Group 7">
+                    <circle id="vial_color_3" cx="692" cy="267" r="45" stroke-width="10"
+                        stroke="#159C78" />
+                    <text id="vial_val_3" fill="white" style="white-space: pre" xml:space="preserve"
+                        font-family="Arial" font-size="24" font-weight="bold" letter-spacing="0em"
+                        text-anchor="middle" x="692"><tspan x="692" y="275.32">{{v_3}}</tspan></text>
+                </g>
+            </g>
+            <g id="vial_4">
+                <text id="threshold_4" fill="white" style="white-space: pre" xml:space="preserve"
+                    font-family="Arial" font-size="14" letter-spacing="0em" text-anchor="middle"
+                    x="872"><tspan x="872" y="340.854">{{thresh_4}}</tspan></text>
+                <g id="Group 8">
+                    <circle id="vial_color_4" cx="872" cy="267" r="45" stroke-width="10"
+                        stroke="#159C78" />
+                    <text id="vial_val_4" fill="white" style="white-space: pre" xml:space="preserve"
+                        font-family="Arial" font-size="24" font-weight="bold" letter-spacing="0em"
+                        text-anchor="middle" x="872"><tspan x="872" y="275.32">{{v_4}}</tspan></text>
+                </g>
+            </g>
+            <g id="threshold_legend">
+                <text id="threshold_legend_text" x="512" y="375.16" text-anchor="middle"
+                    fill="white" font-family="Arial" font-size="12" letter-spacing="0em"
+                    style="white-space: pre" xml:space="preserve"><tspan id="accept_color" fill="#159C78" font-size="15">●</tspan><tspan>  </tspan><tspan id="accept_text">{{accept}}</tspan><tspan>      </tspan><tspan id="reject_color" fill="#475569" font-size="15">●</tspan><tspan>  </tspan><tspan id="reject_text">{{reject}}</tspan></text>
+            </g>
+            <text id="vial_header" fill="white" style="white-space: pre" xml:space="preserve"
+                font-family="Arial" font-size="24" letter-spacing="0em"><tspan x="51" y="174.32">{{vial_header}}</tspan></text>
+        </g>
+        <line id="Line 2" x1="54" y1="141.75" x2="974" y2="141.75" stroke-width="0.5"
+            stroke="#B5B5B5" />
+        <g id="result">
+            <text id="result_text" fill="#C9951C" style="white-space: pre" xml:space="preserve"
+                font-family="Arial" font-size="32" font-weight="bold" letter-spacing="0em"
+                text-anchor="middle" x="512"><tspan x="512" y="121.594">{{result}}</tspan></text>
+            <text id="vials_passed" fill="#C9951C" style="white-space: pre" xml:space="preserve"
+                font-family="Arial" font-size="32" font-weight="bold" letter-spacing="0em"
+                text-anchor="middle" x="512"><tspan x="512" y="84.5938">{{pass}}</tspan></text>
+        </g>
+    </g>
+</svg>
