@@ -172,6 +172,7 @@ class FWSeries:
                 cv2.imwrite(str(fp), image)
         return pack_arr_img
 
+# todo obsolete this
     def save_table(self, composite_results:FWStats, output_dir:str|Path=''):
         pdff_table = gen_results_table(composite_results)
         if output_dir:
@@ -219,9 +220,15 @@ class FWSeries:
             logger.warning(f"Error computing comsposite statistics for series {self.series_number_pdff} {self.series_description_pdff}")
 
         # images and plots
+        from .reporter import Report
         try:
             pack_images = self.make_plot_images(stats_min_loc, stats_max_loc, output_dir=output_dir)
-            pack_table = self.save_table(composite_results, output_dir=output_dir)
+            rpt = Report(images=pack_images)
+            if composite_results.means[0] > composite_results.means[-1]:
+                rpt.set_measurements(list(composite_results.means)[::-1])
+            else:
+                rpt.set_measurements(list(composite_results.means))
+            rpt.generate(Path(output_dir) / 'test_report.png')
         except:
             logger.warning(f"Error saving plots for series {self.series_number_pdff} {self.series_description_pdff}")
 

@@ -48,3 +48,11 @@ include = [
     "/requirements.txt",
     "/pyproject.toml",
 ]
+
+[tool.uv.sources]
+SVGPatcher = { index = "resoundant" }
+
+[[tool.uv.index]]
+name = "resoundant"
+url = "http://rpy.resoundant-hq.com:8081/simple"
+explicit = true

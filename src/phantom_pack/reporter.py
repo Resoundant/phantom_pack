@@ -113,7 +113,7 @@ class Report:
             color = self.ACCEPT_COLOR if accepted else self.REJECT_COLOR
             self.set_vial_color(i, color)
 
-            self.placeholders[f"{{{{v_{i}}}}}"] = f"{value:g}"
+            self.placeholders[f"{{{{v_{i}}}}}"] = f"{value:.2f}"
             self.placeholders[f"{{{{thresh_{i}}}}}"] = f"{low:g}% – {high:g}%"
 
             passed += accepted
@@ -142,7 +142,7 @@ class Report:
         self.placeholders["{{ihr_val}}"] = str(val)
 
     def set_vial_color(self, index: int, color: str):
-        elem = self.tpl.get_elem(f"vile_color_{index}")
+        elem = self.tpl.get_elem(f"vial_color_{index}")
         if elem is not None:
             elem.set("stroke", color)
         return self
